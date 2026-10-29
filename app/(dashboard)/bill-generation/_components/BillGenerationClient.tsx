@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react"
 import { useForm, Controller } from "react-hook-form"
 import { CalendarIcon, XIcon } from "lucide-react"
 import type { DateRange } from "react-day-picker"
+import { toast } from "sonner"
 
 import { useAppDispatch, useAppSelector } from "@/lib/store"
 import { useAuth } from "@/lib/auth/clientAuth"
@@ -144,7 +145,7 @@ export default function BillGenerationClient() {
     )
   }
 
-  function onSubmit(data: BillFormValues) {
+  async function onSubmit(data: BillFormValues) {
     const allHolidays = [...weeklyHolidayDates, ...data.extraHolidays]
     const payload: CalculateBillPayload = {
       dateFrom: toISODate(data.dateRange.from!),
@@ -158,7 +159,19 @@ export default function BillGenerationClient() {
       rates: data.rates,
       penalties: data.penalties,
     }
-    console.log("Bill form submitted:", payload)
+
+    const response = await fetch("/api/billing/calculate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+    const result = await response.json().catch(() => null)
+    if (!response.ok || !result?.success) {
+      toast.error(result?.message ?? "Bill calculation failed")
+      return
+    }
+    console.log("Bill calculation result:", result)
+    toast.success(`Processed ${result.summary.totalRows} rows`)
   }
 
   return (

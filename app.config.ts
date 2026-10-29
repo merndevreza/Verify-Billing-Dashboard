@@ -26,6 +26,7 @@ const DASHBOARD = {
 const BILL = {
   CALCULATE_BILL: BASE_URL + "/api/v2/calculate-billing",
   GET_TRIP_HISTORY: BASE_URL + "/api/v2/reports/trip-history",
+  GET_TRIP_STATUS: BASE_URL + "/api/v2/reports/trip-status", // responds with an .xls download
 }
 
 export { AUTH, COMMON, DASHBOARD, BILL }
