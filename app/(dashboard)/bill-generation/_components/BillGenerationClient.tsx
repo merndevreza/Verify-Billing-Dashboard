@@ -8,7 +8,7 @@ import type { DateRange } from "react-day-picker"
 import { useAppDispatch, useAppSelector } from "@/lib/store"
 import { useAuth } from "@/lib/auth/clientAuth"
 import { fetchOrganizations } from "@/lib/store/slices/billingSlice"
-import type { BillFormValues } from "@/lib/types/billing"
+import type { BillFormValues, CalculateBillPayload } from "@/lib/types/billing"
 import { eachDateInRange, toISODate, formatShortDate } from "@/lib/utils/date"
 
 import { Button } from "@/components/ui/button"
@@ -48,9 +48,22 @@ const WEEKDAYS = [
   { label: "Saturday", value: 6 },
 ]
 
+// reports table, application header, and filter dropdowns.
+const APPLICATION_STATUS_MAP: Record<number, { label: string; value: number }> = {
+  1: { label: 'Created', value: 1 },
+  2: { label: 'On Going', value: 2 },
+  3: { label: 'Hold', value: 3 },
+  4: { label: 'Finished', value: 4 },
+  5: { label: 'Canceled', value: 5 },
+  6: { label: 'Submitted', value: 6 },
+  7: { label: 'Partially Submitted', value: 7 },
+  8: { label: 'Withdrawn', value: 8 },
+};
 const DEFAULT_VALUES: BillFormValues = {
   dateRange: { from: undefined, to: undefined },
   organizationId: "",
+  statuses: [],
+  action_date_type: "END_DATE",
   billingType: "trip",
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
@@ -61,9 +74,11 @@ const DEFAULT_VALUES: BillFormValues = {
 export default function BillGenerationClient() {
   const dispatch = useAppDispatch()
   const { token } = useAuth()
-  const { items: orgs, isLoading: orgsLoading } = useAppSelector(
+  const { user } = useAppSelector((s) => s.auth)
+  const { items: orgItems, isLoading: orgsLoading } = useAppSelector(
     (s) => s.billing.organizations
   )
+  const orgs: any[] = (user?.organizations?.length ? user.organizations : orgItems)
 
   const {
     control,
@@ -75,8 +90,8 @@ export default function BillGenerationClient() {
   } = useForm<BillFormValues>({ defaultValues: DEFAULT_VALUES })
 
   useEffect(() => {
-    if (token) dispatch(fetchOrganizations(token))
-  }, [dispatch, token])
+    if (token && !user?.organizations?.length) dispatch(fetchOrganizations(token))
+  }, [dispatch, token, user?.organizations])
 
   const dateRange = watch("dateRange")
   const weeklyHolidays = watch("weeklyHolidays")
@@ -130,8 +145,20 @@ export default function BillGenerationClient() {
   }
 
   function onSubmit(data: BillFormValues) {
-    // eslint-disable-next-line no-console
-    console.log("Bill form submitted:", data)
+    const allHolidays = [...weeklyHolidayDates, ...data.extraHolidays]
+    const payload: CalculateBillPayload = {
+      dateFrom: toISODate(data.dateRange.from!),
+      dateTill: toISODate(data.dateRange.to!),
+      page: 1,
+      org_id: [data.organizationId],
+      status: data.statuses,
+      action_date_type: data.action_date_type,
+      billingType: data.billingType,
+      holidays: allHolidays,
+      rates: data.rates,
+      penalties: data.penalties,
+    }
+    console.log("Bill form submitted:", payload)
   }
 
   return (
@@ -179,7 +206,7 @@ export default function BillGenerationClient() {
           <CardHeader>
             <CardTitle>Organization & Billing Type</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-2">
+          <CardContent className="grid gap-4 sm:grid-cols-3">
             <div className="grid gap-2">
               <Label htmlFor="org">Organization</Label>
               <Controller
@@ -187,13 +214,13 @@ export default function BillGenerationClient() {
                 name="organizationId"
                 rules={{ required: "Please select an organization" }}
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    items={orgs.map((o: any) => ({ value: o.uuid, label: o.name }))}
+                  >
                     <SelectTrigger className="w-full" id="org">
-                      <SelectValue
-                        placeholder={
-                          orgsLoading ? "Loading…" : "Select organization"
-                        }
-                      />
+                      <SelectValue placeholder={orgsLoading ? "Loading…" : "Select organization"} />
                     </SelectTrigger>
                     <SelectContent>
                       {orgsLoading && (
@@ -203,11 +230,8 @@ export default function BillGenerationClient() {
                         </div>
                       )}
                       {orgs.map((org: any) => (
-                        <SelectItem
-                          key={org.id ?? org.group_id}
-                          value={String(org.id ?? org.group_id)}
-                        >
-                          {org.name ?? org.group_name}
+                        <SelectItem key={org.uuid} value={org.uuid}>
+                          {org.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -222,12 +246,72 @@ export default function BillGenerationClient() {
             </div>
 
             <div className="grid gap-2">
+              <Label>Status</Label>
+              <Controller
+                control={control}
+                name="statuses"
+                render={({ field }) => (
+                  <Select
+                    multiple
+                    value={field.value}
+                    onValueChange={field.onChange}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="All statuses">
+                        {(val: number[]) =>
+                          val.length === 0
+                            ? "All statuses"
+                            : val.length === 1
+                              ? APPLICATION_STATUS_MAP[val[0]]?.label
+                              : `${val.length} selected`
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.values(APPLICATION_STATUS_MAP).map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="action_date_type">Sort By</Label>
+              <Controller
+                control={control}
+                name="action_date_type"
+                render={({ field }) => (
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    items={[{ value: "START_DATE", label: "Start Date" }, { value: "END_DATE", label: "End Date" }]}
+                  >
+                    <SelectTrigger className="w-full" id="action_date_type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="START_DATE">Start Date</SelectItem>
+                      <SelectItem value="END_DATE">End Date</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+            <div className="grid gap-2">
               <Label htmlFor="billingType">Billing Type</Label>
               <Controller
                 control={control}
                 name="billingType"
                 render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    items={[{ value: "trip", label: "Trip wise" }, { value: "location", label: "Location wise" }]}
+                  >
                     <SelectTrigger className="w-full" id="billingType">
                       <SelectValue />
                     </SelectTrigger>

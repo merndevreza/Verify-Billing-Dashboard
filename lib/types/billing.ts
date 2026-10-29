@@ -4,9 +4,13 @@ import type { DateRange } from "react-day-picker"
 export type BillingType = "trip" | "location"
 
 /** Form values collected by the /bill-generation form (React Hook Form). */
+export type ActionDateType = "START_DATE" | "END_DATE"
+
 export interface BillFormValues {
   dateRange: DateRange
   organizationId: string
+  statuses: number[]
+  action_date_type: ActionDateType
   billingType: BillingType
   /** General weekly holidays as JS getDay() indexes (0 = Sunday … 6 = Saturday). */
   weeklyHolidays: number[]
@@ -26,17 +30,16 @@ export interface BillFormValues {
   }
 }
 
-/** Payload posted to the NEW /api/billing/calculate route handler. */
+/** Payload posted to the billing calculate route handler. */
 export interface CalculateBillPayload {
-  organizationId: string
+  dateFrom: string
+  dateTill: string
+  page: number
+  org_id: string[]
+  status: number[]
+  action_date_type: ActionDateType
   billingType: BillingType
-  period: { from: string; to: string }
-  holidays: {
-    weekly: number[]
-    extra: string[]
-    /** Every holiday date in the period (weekly-derived + extra), "yyyy-mm-dd". */
-    dates: string[]
-  }
+  holidays: string[]
   rates: BillFormValues["rates"]
   penalties: BillFormValues["penalties"]
 }
