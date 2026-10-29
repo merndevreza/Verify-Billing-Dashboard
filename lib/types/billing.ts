@@ -1,0 +1,42 @@
+import type { DateRange } from "react-day-picker"
+
+/** How trips are grouped on the bill. */
+export type BillingType = "trip" | "location"
+
+/** Form values collected by the /bill-generation form (React Hook Form). */
+export interface BillFormValues {
+  dateRange: DateRange
+  organizationId: string
+  billingType: BillingType
+  /** General weekly holidays as JS getDay() indexes (0 = Sunday … 6 = Saturday). */
+  weeklyHolidays: number[]
+  /** Extra holidays picked from the calendar, local "yyyy-mm-dd". */
+  extraHolidays: string[]
+  rates: {
+    inStation: number
+    outStation: number
+    remote: number
+  }
+  /** SLA-breach penalty percentage per delayed day. */
+  penalties: {
+    day1: number
+    day2: number
+    day3: number
+    day4: number
+  }
+}
+
+/** Payload posted to the NEW /api/billing/calculate route handler. */
+export interface CalculateBillPayload {
+  organizationId: string
+  billingType: BillingType
+  period: { from: string; to: string }
+  holidays: {
+    weekly: number[]
+    extra: string[]
+    /** Every holiday date in the period (weekly-derived + extra), "yyyy-mm-dd". */
+    dates: string[]
+  }
+  rates: BillFormValues["rates"]
+  penalties: BillFormValues["penalties"]
+}
