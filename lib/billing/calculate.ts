@@ -19,7 +19,7 @@ import {
 // 1. graphhopper: self-hosted GraphHopper (graphhopper-bd docker, GRAPHHOPPER_URL)
 // 2. barikoi-routing: Barikoi routing API (needs BARIKOI_API_KEY in .env)
 //import { haversineM, routeDistanceM } from "./graphhopper"
- import { haversineM, routeDistanceM } from "./barikoi-routing"
+import { haversineM, routeDistanceM } from "./barikoi-routing"
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
 export interface BillingParams {

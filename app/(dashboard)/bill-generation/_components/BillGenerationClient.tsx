@@ -35,6 +35,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import DateRangeField from "./DateRangeField"
@@ -87,7 +93,7 @@ export default function BillGenerationClient() {
     handleSubmit,
     watch,
     setValue,
-    formState: { errors },
+    formState: { errors, isSubmitting },
   } = useForm<BillFormValues>({ defaultValues: DEFAULT_VALUES })
 
   useEffect(() => {
@@ -554,11 +560,36 @@ export default function BillGenerationClient() {
         </Card>
 
         <div className="flex justify-end">
-          <Button type="submit" size="lg">
-            Generate Bill
+          <Button type="submit" size="lg" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Spinner className="size-3.5" />
+                Generating…
+              </>
+            ) : (
+              "Generate Bill"
+            )}
           </Button>
         </div>
       </form>
+
+      {/* Generation can take 1–2 minutes on large reports — modal + disabled
+          submit keep the user from re-submitting or navigating away. */}
+      <Dialog open={isSubmitting}>
+        <DialogContent showCloseButton={false} className="max-w-xs">
+          <div className="flex items-start gap-3">
+            <Spinner className="mt-0.5 size-5" />
+            <div className="grid gap-1">
+              <DialogTitle>Generating billing report…</DialogTitle>
+              <DialogDescription>
+                Downloading trips, classifying In/Out/Remote and calculating
+                bills. This can take 1–2 minutes for large reports — please
+                keep this tab open.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
