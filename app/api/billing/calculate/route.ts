@@ -143,7 +143,12 @@ export async function POST(request: Request) {
     })
 
     // 4. Generate the Excel report, archive it + the summary, return it.
-    const output = buildBillingWorkbook(rows, baseHeaders, parsed.dateFormats)
+    const output = buildBillingWorkbook(
+      rows,
+      baseHeaders,
+      parsed.dateFormats,
+      summary
+    )
     await saveRunFile(runId, "billing_report.xlsx", output)
     await saveRunFile(
       runId,
@@ -157,6 +162,9 @@ export async function POST(request: Request) {
         "Content-Type": XLSX_CONTENT_TYPE,
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Content-Length": String(output.byteLength),
+        "X-Total-Rows": String(summary.totalRows),
+        "X-Billed-Trips": String(summary.billed),
+        "X-Total-Amount": String(summary.totalAmount),
       },
     })
   } catch (error) {

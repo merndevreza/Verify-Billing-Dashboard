@@ -1,7 +1,8 @@
 // Core billing engine: classification (Rule 2 + 11), TAT (Rule 4, 5, 11.A),
 // penalty (Rule 6) and final price (Rule 7). Runs on the parsed trip rows in
-// place — no row copies — and routes Out/Remote candidates through GraphHopper
-// with caching, a straight-line prefilter and bounded concurrency.
+// place — no row copies — and routes Out/Remote candidates through the
+// selected routing provider (see import below) with caching, a straight-line
+// prefilter, nearest-first early exit and bounded concurrency.
 
 import {
   branchesForDistrict,
@@ -175,12 +176,15 @@ export async function processBilling(
     // Straight-line prefilter: road distance ≥ straight-line, so a branch
     // whose own radius is already exceeded by the straight line can never
     // classify the trip as OUT — skipping its route call is lossless.
+    // Survivors are checked nearest-first: the first branch that fits its own
+    // radius settles the trip as OUT, so ordering by straight line makes the
+    // early exit as fast as possible.
     const comparisons: string[] = []
-    const candidates: Branch[] = []
+    const candidates: { branch: Branch; straightKm: number }[] = []
     for (const branch of districtBranches) {
       const straightKm = haversineM(lat, lon, branch.lat, branch.lon) / 1000
       if (straightKm <= branch.max_distance_km) {
-        candidates.push(branch)
+        candidates.push({ branch, straightKm })
       } else {
         comparisons.push(
           `${branch.branch_name}: straight-line ${straightKm.toFixed(2)} km > ${branch.max_distance_km} km limit, not routed`
@@ -190,46 +194,55 @@ export async function processBilling(
     if (candidates.length === 0) {
       return { outcome: "REMOTE", comparison: comparisons.join("; ") }
     }
+    candidates.sort((a, b) => a.straightKm - b.straightKm)
 
     if (routerDown) {
-      for (const branch of candidates) {
+      for (const { branch } of candidates) {
         comparisons.push(`${branch.branch_name}: not attempted, router down`)
       }
       return { outcome: ROUTE_UNAVAILABLE_MARKER, comparison: comparisons.join("; ") }
     }
 
-    // Step C — motorcycle road distance to each candidate, shortest wins.
-    let bestDistance = Infinity
-    let bestBranch: Branch | null = null
-    for (const branch of candidates) {
+    // Step C/D — motorcycle road distance per candidate. OUT as soon as ANY
+    // candidate fits within its own radius (the remaining ones are not
+    // measured); REMOTE only after EVERY candidate was measured and exceeded
+    // its radius. Any failed/unmeasured candidate → Rule 11.C marker, never
+    // a guessed REMOTE.
+    let measured = 0
+    let anyFailed = false
+    for (let i = 0; i < candidates.length; i++) {
+      const { branch } = candidates[i]
       try {
         const distance = await routeWithCache([lat, lon], branch)
         routeFailStreak = 0
-        comparisons.push(`${branch.branch_name}: ${(distance / 1000).toFixed(2)} km`)
-        if (distance < bestDistance) {
-          bestDistance = distance
-          bestBranch = branch
+        measured++
+        const km = distance / 1000
+        if (km <= branch.max_distance_km) {
+          const earlyExit =
+            i < candidates.length - 1
+              ? ", remaining branches not routed"
+              : ""
+          comparisons.push(
+            `${branch.branch_name}: ${km.toFixed(2)} km ≤ ${branch.max_distance_km} km limit${earlyExit}`
+          )
+          return { outcome: "OUT", comparison: comparisons.join("; ") }
         }
+        comparisons.push(
+          `${branch.branch_name}: ${km.toFixed(2)} km > ${branch.max_distance_km} km limit`
+        )
       } catch {
         routeFailStreak++
         if (routeFailStreak >= ROUTE_BREAKER_THRESHOLD) routerDown = true
+        anyFailed = true
         comparisons.push(`${branch.branch_name}: route failed`)
       }
     }
-    if (!bestBranch) {
-      // Rule 11.C
-      return {
-        outcome: ROUTE_UNAVAILABLE_MARKER,
-        comparison: comparisons.join("; "),
-      }
-    }
-
-    // Step D — compare against the winning branch's own radius.
-    return {
-      outcome:
-        bestDistance <= bestBranch.max_distance_km * 1000 ? "OUT" : "REMOTE",
-      comparison: comparisons.join("; "),
-    }
+    return measured === candidates.length && !anyFailed
+      ? { outcome: "REMOTE", comparison: comparisons.join("; ") }
+      : {
+          outcome: ROUTE_UNAVAILABLE_MARKER,
+          comparison: comparisons.join("; "),
+        }
   }
 
   /** Rules 3–7 for a classified row. Returns false when TAT is not computable. */

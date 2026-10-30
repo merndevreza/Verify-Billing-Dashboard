@@ -1,6 +1,10 @@
 import * as XLSX from "xlsx"
 import type { ParsedTripFile } from "./parse"
-import { BILLING_COLUMN_HEADERS, type BillingRow } from "./types"
+import {
+  BILLING_COLUMN_HEADERS,
+  type BillSummary,
+  type BillingRow,
+} from "./types"
 
 /**
  * Fallback date display (Excel builtin numFmtId 22) for when the source file
@@ -12,20 +16,37 @@ const DEFAULT_DATE_FORMAT = "m/d/yy h:mm"
 
 /**
  * Build the generated billing report: original columns in original order with
- * the updated classification values, plus the five billing columns. Numeric
+ * the updated classification values, plus the billing columns. Numeric
  * billing values are written as numbers; empty ones are skipped so the cells
  * stay blank. Date columns get the number format detected in the source file
  * (or the export's default) so they render as dates, not raw serials.
+ * When a summary is provided, a grand-total row is appended under the data.
  */
 export function buildBillingWorkbook(
   rows: BillingRow[],
   baseHeaders: string[],
-  dateFormats: ParsedTripFile["dateFormats"]
+  dateFormats: ParsedTripFile["dateFormats"],
+  summary?: BillSummary
 ): Buffer {
   const header = [...baseHeaders, ...BILLING_COLUMN_HEADERS]
   const ws = XLSX.utils.json_to_sheet(rows, { header })
-
   const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1")
+
+  // Grand-total row under the data (only when a summary is provided).
+  if (summary) {
+    const totalCol = header.indexOf("Price After Penalty")
+    const nextRow = range.e.r + 1
+    XLSX.utils.sheet_add_aoa(
+      ws,
+      [[`Grand Total — ${summary.billed} billed trips`]],
+      { origin: { r: nextRow, c: range.s.c } }
+    )
+    if (totalCol >= 0) {
+      XLSX.utils.sheet_add_aoa(ws, [[summary.totalAmount]], {
+        origin: { r: nextRow, c: totalCol },
+      })
+    }
+  }
   const dateColumns = ["VerificationDateTime", "Receive Date"] as const
   for (const column of dateColumns) {
     const format = dateFormats[column] ?? DEFAULT_DATE_FORMAT

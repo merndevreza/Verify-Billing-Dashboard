@@ -188,7 +188,14 @@ export default function BillGenerationClient() {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(url)
-    toast.success("Billing report downloaded")
+
+    const totalAmount = response.headers.get("X-Total-Amount")
+    const billedTrips = response.headers.get("X-Billed-Trips")
+    toast.success(
+      totalAmount
+        ? `Report downloaded — Tk ${Number(totalAmount).toLocaleString("en-IN")}${billedTrips ? ` (${billedTrips} billed trips)` : ""}`
+        : "Billing report downloaded"
+    )
   }
 
   return (
