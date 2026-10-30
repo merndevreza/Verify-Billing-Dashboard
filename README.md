@@ -12,7 +12,7 @@ Standalone dashboard for billing calculation and per-organization **Excel report
 | UI | shadcn/ui (base-ui based, `base-mira` style) + Tailwind CSS v4 |
 | State | Redux Toolkit |
 | Auth | NextAuth v5 (beta) — Credentials provider, JWT strategy |
-| Routing distances | Self-hosted GraphHopper 11.1 (see [graphhopper-bd](../graphhopper-bd)) |
+| Routing distances | Self-hosted GraphHopper 11.1 (see [graphhopper-bd](../graphhopper-bd)) **or** Barikoi routing API — switchable with one import in `lib/billing/calculate.ts` |
 | Excel processing | SheetJS (`xlsx`) — reads the backend's BIFF `.xls`, writes the `.xlsx` report |
 | Icons / Notifications | lucide-react / sonner |
 
@@ -24,13 +24,24 @@ cp .env.example .env         # fill in values
 npm run dev                  # http://localhost:3000
 ```
 
-Start the routing server (required for Out/Remote classification):
+Start the routing server (required for Out/Remote classification when using the GraphHopper provider):
 
 ```bash
 cd ../graphhopper-bd
 ./scripts/download.sh        # one-time: GraphHopper JAR + Bangladesh OSM extract
 docker compose up -d         # first start imports OSM (10–20 min)
 ```
+
+### Routing provider
+
+`lib/billing/calculate.ts` picks the distance provider with one import — both files export the same interface:
+
+```ts
+import { haversineM, routeDistanceM } from "./graphhopper"        // self-hosted GraphHopper
+// import { haversineM, routeDistanceM } from "./barikoi-routing" // Barikoi routing API
+```
+
+The Barikoi provider needs `BARIKOI_API_KEY` in `.env` and uses the `motorcycle` profile. Note the two engines weight roads differently, so distances (and a few boundary OUT/REMOTE rows) can differ between providers — the `Compared Branches And Distances` audit column always shows the distances actually used.
 
 ### Environment
 
@@ -39,6 +50,7 @@ docker compose up -d         # first start imports OSM (10–20 min)
 | `NEXT_PUBLIC_API_BASE_URL` | Verify backend base URL (staging: `https://api.verify.barikoimaps.dev`, production: `https://api.verify.bmapsbd.com`) |
 | `NEXTAUTH_SECRET` | NextAuth JWT signing (reuse v3's) |
 | `GRAPHHOPPER_URL` | Routing server (default `http://localhost:8989`) |
+| `BARIKOI_API_KEY` | Barikoi routing API key (only for the Barikoi provider) |
 
 ## How bill generation works
 
