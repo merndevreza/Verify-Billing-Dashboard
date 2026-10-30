@@ -34,11 +34,11 @@ docker compose up -d         # first start imports OSM (10–20 min)
 
 ### Routing provider
 
-`lib/billing/calculate.ts` picks the distance provider with one import — both files export the same interface:
+`lib/billing/calculate.ts` picks the distance provider with one import — both files export the same interface (currently the Barikoi API is active):
 
 ```ts
-import { haversineM, routeDistanceM } from "./graphhopper"        // self-hosted GraphHopper
-// import { haversineM, routeDistanceM } from "./barikoi-routing" // Barikoi routing API
+// import { haversineM, routeDistanceM } from "./graphhopper" // self-hosted GraphHopper
+import { haversineM, routeDistanceM } from "./barikoi-routing" // Barikoi routing API
 ```
 
 The Barikoi provider needs `BARIKOI_API_KEY` in `.env` and uses the `motorcycle` profile. Note the two engines weight roads differently, so distances (and a few boundary OUT/REMOTE rows) can differ between providers — the `Compared Branches And Distances` audit column always shows the distances actually used.
@@ -78,8 +78,8 @@ Every trip is **revalidated server-side** — the backend's existing `in_out_rem
 | Address contains the trip's district name followed by “Sadar” | `OUT` — inside the district's sadar area, no branch check needed. |
 | District is Dhaka (outside the metro; inside-metro trips are already `IN`) | `OUT` — confirmed business rule, no branch check. |
 | Otherwise: look up branches in `data/brac_branches.json` whose `district` matches the trip's district (`category: "out"` only) | No eligible branch → `REMOTE` (billing continues normally). |
-| Straight-line prefilter | Branches already farther than their own `max_distance_km` **by straight line** are skipped without routing (road distance ≥ straight-line, so they can never win) — lossless. |
-| Motorcycle **road distance** (GraphHopper `motorcycle` profile) to each surviving candidate; shortest wins | Shortest road distance ≤ that branch's `max_distance_km` → `OUT`, otherwise → `REMOTE`. |
+| Straight-line prefilter + nearest-first ordering | Branches already farther than their own `max_distance_km` **by straight line** are skipped without routing (road distance ≥ straight-line, so they can never qualify) — lossless. Survivors are routed nearest-first. |
+| Motorcycle **road distance** (routing provider, `motorcycle` profile) — **OUT on first fit** | As soon as **any** candidate fits within its **own** `max_distance_km` → `OUT`; remaining branches are not measured. `REMOTE` only after **every** candidate was measured and exceeded its radius. |
 
 District spellings are normalized before matching, with aliases for common variants (Bogura/Bogra, Jashore/Jessore, Chittagong/Chattogram, Barisal/Barishal, Comilla/Cumilla, …), so a spelling mismatch never silently reclassifies a district as Remote.
 
@@ -87,7 +87,7 @@ District spellings are normalized before matching, with aliases for common varia
 
 | Situation | Behavior |
 | --- | --- |
-| GraphHopper cannot route a trip | Classification cell becomes `ROUTE_DISTANCE_UNAVAILABLE`; billing columns left empty; the row is preserved; the run continues. |
+| The routing provider cannot route a trip | Classification cell becomes `ROUTE_DISTANCE_UNAVAILABLE`; billing columns left empty; the row is preserved; the run continues. A failed route never becomes a guessed REMOTE. |
 | Router down for the whole run (30 consecutive failures) | Remaining route-dependent rows short-circuit to `ROUTE_DISTANCE_UNAVAILABLE` instead of hammering a dead server. |
 | Missing/invalid trip coordinates | Classification cell becomes `INVALID_COORDINATES`; billing columns left empty. |
 | `in_out_remote` value is not IN/OUT/REMOTE | Left as-is; billing columns left empty. |
@@ -113,12 +113,14 @@ Date cells arrive as Excel serial numbers or `mm-dd-yyyy AM/PM` strings — both
 - All **original columns, values, records and column order** preserved; `in_out_remote` updated with the final classification; dates keep date formatting (numeric cells, Excel builtin format).
 - Appended columns: `Rate`, `TAT Days`, `TAT Extra`, `Penalty`, `Price After Penalty` (numeric cells), then the audit column **`Compared Branches And Distances`**.
 - Numeric values are stored as numbers, not strings; unbillable rows leave the five billing columns blank.
+- A grand-total row (`Grand Total — <N> billed trips` + the sum under `Price After Penalty`) is appended under the data.
 
 The audit column makes every classification verifiable:
 
 | Content | Meaning |
 | --- | --- |
-| `Sylhet Branch: 12.34 km; …` | Each branch routed for this trip and its motorcycle road distance (shortest one decides OUT/REMOTE). |
+| `Sonargaon Branch: 13.55 km ≤ 30 km limit, remaining branches not routed` | Early exit — first fitting branch decided OUT; later candidates were not measured. |
+| `Coxs Bazar Branch: 35.79 km > 35 km limit` | Routed candidate that exceeded its radius (REMOTE once all candidates exceeded). |
 | `Jessore Branch: straight-line 80.33 km > 35 km limit, not routed` | Branch skipped by the straight-line prefilter. |
 | `Dhaka district; no branch check` / `district-sadar address; no branch check` | Classified without routing. |
 | `no eligible branch for district "X"` | Rule: no matching branch → Remote. |
@@ -127,7 +129,7 @@ The audit column makes every classification verifiable:
 
 ### Performance
 
-Sized for 15,000–16,000-row (30-day) reports: rows are processed in place (no copies), route calls are prefiltered by straight-line distance, cached per branch + ~11 m coordinate key, run with bounded concurrency (8 workers), and a circuit breaker stops route calls when the router is down. The 663-row sample report processes in well under a second against a local GraphHopper.
+Sized for 15,000–16,000-row (30-day) reports: rows are processed in place (no copies), route calls are prefiltered by straight-line distance, ordered nearest-first with an early exit on the first fitting branch, cached per branch + ~11 m coordinate key, run with bounded concurrency (8 workers), and a circuit breaker stops route calls when the router is down. The 663-row sample report processes in a couple of seconds against the remote Barikoi API.
 
 ## API routes
 
@@ -156,6 +158,8 @@ Request body (all billing parameters come from the form):
 
 Existing backend endpoints used directly from the client (Bearer from session, via `clientAPI`): `AUTH.GET_USER`, `COMMON.GET_GROUP`, `BILL.GET_TRIP_HISTORY` — registered in `app.config.ts`. The billing route handler fetches `BILL.GET_TRIP_STATUS` server-side via `serverAPI`.
 
+Success responses carry `X-Total-Rows`, `X-Billed-Trips` and `X-Total-Amount` headers (the UI shows the total in the download toast). While the request runs, the form disables the submit button and shows a non-dismissable progress dialog — large reports take 1–2 minutes.
+
 ## Architecture at a glance
 
 ```
@@ -166,7 +170,7 @@ New billing APIs (server-side logic):
   Browser ──▶ app/api/billing/calculate ──▶ parse + classify + bill ──▶ .xlsx download
                      │  backend input data via Bearer token        ▲
                      ▼                                             │ motorcycle road distances
-              Verify backend  ────────────────────▶  GraphHopper (graphhopper-bd, :8989)
+              Verify backend  ────────────────────▶  routing provider (GraphHopper :8989 or Barikoi API)
 ```
 
 - **Auth** — `auth.config.ts` / `auth.ts` / `proxy.ts`, login page at `app/login`, session carries `accessToken`, `user`, `permissions`, `vendor_id`. Next 16 proxy convention (`proxy.ts`) replaces v3's deprecated `middleware.ts`.
@@ -197,10 +201,11 @@ lib/
 ├── api/{client,server,fetcher}.ts    # two-layer API (client → backend / routes → backend)
 ├── auth/clientAuth.tsx               # useAuth() hook (user, token, logout)
 ├── billing/
+│   ├── barikoi-routing.ts            # Barikoi routing API client (motorcycle, BARIKOI_API_KEY)
 │   ├── branches.ts                   # branch index, district normalization/aliases, sadar check
 │   ├── calculate.ts                  # classification engine + TAT/penalty/price per trip
 │   ├── dates.ts                      # timezone-safe calendar math, Excel serial parsing
-│   ├── graphhopper.ts                # motorcycle road-distance client + haversine
+│   ├── graphhopper.ts                # GraphHopper road-distance client + haversine (alt. provider)
 │   ├── parse.ts                      # .xls parsing (+ source date-format detection)
 │   ├── report.ts                     # .xlsx report builder
 │   ├── storage.ts                    # run archive under gitignored .data/billing/<runId>/
