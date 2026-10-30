@@ -69,7 +69,7 @@ const DEFAULT_VALUES: BillFormValues = {
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
   rates: { inStation: 150, outStation: 200, remote: 685 },
-  penalties: { day1: 10, day2: 20, day3: 30, day4: 40 },
+  penalties: { day1: 10, day2: 20, day3: 30, day4: 40, day5: 50, day6: 60, day7: 70 },
 }
 
 export default function BillGenerationClient() {
@@ -162,16 +162,33 @@ export default function BillGenerationClient() {
 
     const response = await fetch("/api/billing/calculate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
       body: JSON.stringify(payload),
     })
-    const result = await response.json().catch(() => null)
-    if (!response.ok || !result?.success) {
+    // Error responses are JSON; success streams the generated .xlsx back.
+    const contentType = response.headers.get("content-type") ?? ""
+    if (!response.ok || contentType.includes("application/json")) {
+      const result = await response.json().catch(() => null)
       toast.error(result?.message ?? "Bill calculation failed")
       return
     }
-    console.log("Bill calculation result:", result)
-    toast.success(`Processed ${result.summary.totalRows} rows`)
+
+    const blob = await response.blob()
+    const disposition = response.headers.get("content-disposition") ?? ""
+    const fileName =
+      /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? "Billing_Report.xlsx"
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
+    toast.success("Billing report downloaded")
   }
 
   return (
@@ -499,6 +516,9 @@ export default function BillGenerationClient() {
                 { key: "day2", label: "2 Days" },
                 { key: "day3", label: "3 Days" },
                 { key: "day4", label: "4 Days" },
+                { key: "day5", label: "5 Days" },
+                { key: "day6", label: "6 Days" },
+                { key: "day7", label: "7 Days" },
               ] as const
             ).map(({ key, label }) => (
               <div key={key} className="grid gap-2">

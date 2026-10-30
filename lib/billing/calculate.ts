@@ -1,53 +1,311 @@
-import type { BilledRow, BillSummary, TripStatusRow } from "./types"
+// Core billing engine: classification (Rule 2 + 11), TAT (Rule 4, 5, 11.A),
+// penalty (Rule 6) and final price (Rule 7). Runs on the parsed trip rows in
+// place — no row copies — and routes Out/Remote candidates through GraphHopper
+// with caching, a straight-line prefilter and bounded concurrency.
 
-export interface Rates {
-  inStation: number
-  outStation: number
-  remote: number
+import {
+  branchesForDistrict,
+  isDistrictSadarAddress,
+  isDhakaDistrict,
+  type Branch,
+} from "./branches"
+import {
+  countHolidaysBetween,
+  diffCalendarDays,
+  parseCalendarDate,
+} from "./dates"
+import { haversineM, routeDistanceM } from "./graphhopper"
+import type { BillSummary, BillingRow, TripStatusRow } from "./types"
+
+export interface BillingParams {
+  rates: { inStation: number; outStation: number; remote: number }
+  penalties: {
+    day1: number
+    day2: number
+    day3: number
+    day4: number
+    day5: number
+    day6: number
+    day7: number
+  }
+  /** ISO calendar dates (yyyy-mm-dd) excluded from the TAT count. */
+  holidays: string[]
 }
 
-function normaliseZone(value: unknown): BilledRow["zone"] {
-  const v = String(value ?? "")
-    .trim()
-    .toUpperCase()
-  return v === "IN" || v === "OUT" || v === "REMOTE" ? v : ""
+/** Completion SLA per zone, in days (Rule 5). */
+const EXPECTED_DAYS = { IN: 1, OUT: 2, REMOTE: 3 } as const
+type Zone = keyof typeof EXPECTED_DAYS
+
+/** Rule 11.C — routing failed; billing skipped for the row. */
+export const ROUTE_UNAVAILABLE_MARKER = "ROUTE_DISTANCE_UNAVAILABLE"
+/** Row needs routing but its coordinates are missing/invalid. */
+export const INVALID_COORDINATES_MARKER = "INVALID_COORDINATES"
+
+/** Penalties are defined for up to 7 extra days; beyond that day7 applies. */
+const MAX_PENALTY_EXTRA_DAYS = 7
+const ROUTE_CONCURRENCY = 8
+/** Consecutive route failures before the router is treated as down for the rest of the run. */
+const ROUTE_BREAKER_THRESHOLD = 30
+/** ~11 m — coordinate rounding for the route cache key. */
+const CACHE_PRECISION = 4
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
 }
 
-/** Set each row's amount from its in_out_remote value: IN → inStation, OUT → outStation, REMOTE → remote. */
-export function applyRates(
+const PENALTY_KEYS = [
+  "day1",
+  "day2",
+  "day3",
+  "day4",
+  "day5",
+  "day6",
+  "day7",
+] as const
+
+function penaltyPercentFor(
+  extraDays: number,
+  penalties: BillingParams["penalties"]
+): number {
+  if (extraDays <= 0) return 0
+  const day = Math.min(extraDays, MAX_PENALTY_EXTRA_DAYS)
+  return penalties[PENALTY_KEYS[day - 1]]
+}
+
+function toCoord(value: unknown): number {
+  return typeof value === "number" ? value : Number(String(value ?? "").trim())
+}
+
+export async function processBilling(
   rows: TripStatusRow[],
-  rates: Rates
-): { rows: BilledRow[]; summary: BillSummary } {
+  params: BillingParams
+): Promise<{ rows: BillingRow[]; summary: BillSummary }> {
+  const holidays = new Set(params.holidays)
   const summary: BillSummary = {
     totalRows: rows.length,
-    inStation: { count: 0, amount: 0 },
-    outStation: { count: 0, amount: 0 },
-    remote: { count: 0, amount: 0 },
-    unmatched: 0,
+    billed: 0,
+    classification: { in: 0, out: 0, remote: 0 },
+    routeUnavailable: 0,
+    invalidCoordinates: 0,
+    tatUnavailable: 0,
+    unclassified: 0,
     totalAmount: 0,
   }
 
-  const billed = rows.map((row): BilledRow => {
-    const zone = normaliseZone(row.in_out_remote)
-    let amount = 0
-    if (zone === "IN") {
-      amount = rates.inStation
-      summary.inStation.count++
-      summary.inStation.amount += amount
-    } else if (zone === "OUT") {
-      amount = rates.outStation
-      summary.outStation.count++
-      summary.outStation.amount += amount
-    } else if (zone === "REMOTE") {
-      amount = rates.remote
-      summary.remote.count++
-      summary.remote.amount += amount
-    } else {
-      summary.unmatched++
-    }
-    summary.totalAmount += amount
-    return { ...row, zone, amount }
-  })
+  const routeCache = new Map<string, number>()
+  let routeFailStreak = 0
+  let routerDown = false
 
-  return { rows: billed, summary }
+  async function routeWithCache(
+    trip: [number, number],
+    branch: Branch
+  ): Promise<number> {
+    const key = `${branch.id}:${trip[0].toFixed(CACHE_PRECISION)},${trip[1].toFixed(CACHE_PRECISION)}`
+    const cached = routeCache.get(key)
+    if (cached !== undefined) return cached
+    const distance = await routeDistanceM(trip, [branch.lat, branch.lon])
+    routeCache.set(key, distance)
+    return distance
+  }
+
+  type ClassifyOutcome =
+    | Zone
+    | null
+    | typeof ROUTE_UNAVAILABLE_MARKER
+    | typeof INVALID_COORDINATES_MARKER
+
+  interface ClassifyResult {
+    outcome: ClassifyOutcome
+    /** Human-readable audit trail of the branch comparisons for this row. */
+    comparison: string | null
+  }
+
+  /**
+   * Rule 2 + 11 for one row. Returns the final zone (null when the original
+   * classification is not IN/OUT/REMOTE, or a marker for the failure cases)
+   * plus the branch-comparison audit trail.
+   */
+  async function classify(row: TripStatusRow): Promise<ClassifyResult> {
+    const existing = String(row.in_out_remote ?? "").trim().toUpperCase()
+
+    // Rule 1 — In stays In, no distance check.
+    if (existing === "IN") return { outcome: "IN", comparison: null }
+    if (existing !== "OUT" && existing !== "REMOTE") {
+      return { outcome: null, comparison: null }
+    }
+
+    // Step A — District Sadar check, no routing.
+    if (isDistrictSadarAddress(row.District, row.Address)) {
+      return {
+        outcome: "OUT",
+        comparison: "district-sadar address; no branch check",
+      }
+    }
+
+    // Confirmed rule: Dhaka-district trips are outside the metro here (inside
+    // metro ones stay IN via Rule 1) — they are always OUT, no branch check.
+    if (isDhakaDistrict(row.District)) {
+      return { outcome: "OUT", comparison: "Dhaka district; no branch check" }
+    }
+
+    // Step B — eligible branches for this district (category "out" only).
+    const districtBranches = branchesForDistrict(row.District) ?? []
+    if (districtBranches.length === 0) {
+      // Rule 11.B
+      return {
+        outcome: "REMOTE",
+        comparison: `no eligible branch for district "${row.District}"`,
+      }
+    }
+
+    const lat = toCoord(row.Latitude)
+    const lon = toCoord(row.Longitude)
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon) ||
+      (lat === 0 && lon === 0)
+    ) {
+      return { outcome: INVALID_COORDINATES_MARKER, comparison: null }
+    }
+
+    // Straight-line prefilter: road distance ≥ straight-line, so a branch
+    // whose own radius is already exceeded by the straight line can never
+    // classify the trip as OUT — skipping its route call is lossless.
+    const comparisons: string[] = []
+    const candidates: Branch[] = []
+    for (const branch of districtBranches) {
+      const straightKm = haversineM(lat, lon, branch.lat, branch.lon) / 1000
+      if (straightKm <= branch.max_distance_km) {
+        candidates.push(branch)
+      } else {
+        comparisons.push(
+          `${branch.branch_name}: straight-line ${straightKm.toFixed(2)} km > ${branch.max_distance_km} km limit, not routed`
+        )
+      }
+    }
+    if (candidates.length === 0) {
+      return { outcome: "REMOTE", comparison: comparisons.join("; ") }
+    }
+
+    if (routerDown) {
+      for (const branch of candidates) {
+        comparisons.push(`${branch.branch_name}: not attempted, router down`)
+      }
+      return { outcome: ROUTE_UNAVAILABLE_MARKER, comparison: comparisons.join("; ") }
+    }
+
+    // Step C — motorcycle road distance to each candidate, shortest wins.
+    let bestDistance = Infinity
+    let bestBranch: Branch | null = null
+    for (const branch of candidates) {
+      try {
+        const distance = await routeWithCache([lat, lon], branch)
+        routeFailStreak = 0
+        comparisons.push(`${branch.branch_name}: ${(distance / 1000).toFixed(2)} km`)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          bestBranch = branch
+        }
+      } catch {
+        routeFailStreak++
+        if (routeFailStreak >= ROUTE_BREAKER_THRESHOLD) routerDown = true
+        comparisons.push(`${branch.branch_name}: route failed`)
+      }
+    }
+    if (!bestBranch) {
+      // Rule 11.C
+      return {
+        outcome: ROUTE_UNAVAILABLE_MARKER,
+        comparison: comparisons.join("; "),
+      }
+    }
+
+    // Step D — compare against the winning branch's own radius.
+    return {
+      outcome:
+        bestDistance <= bestBranch.max_distance_km * 1000 ? "OUT" : "REMOTE",
+      comparison: comparisons.join("; "),
+    }
+  }
+
+  /** Rules 3–7 for a classified row. Returns false when TAT is not computable. */
+  function applyBilling(row: BillingRow, zone: Zone): boolean {
+    const rate =
+      zone === "IN"
+        ? params.rates.inStation
+        : zone === "OUT"
+          ? params.rates.outStation
+          : params.rates.remote
+    row["Rate"] = rate
+
+    const receiveISO = parseCalendarDate(row["Receive Date"])
+    const verifyISO = parseCalendarDate(row.VerificationDateTime)
+    if (!receiveISO || !verifyISO) return false
+
+    const tatDays =
+      diffCalendarDays(receiveISO, verifyISO) +
+      1 -
+      countHolidaysBetween(receiveISO, verifyISO, holidays)
+    const tatExtra = Math.max(0, tatDays - EXPECTED_DAYS[zone])
+    const penalty = penaltyPercentFor(tatExtra, params.penalties)
+    row["TAT Days"] = tatDays
+    row["TAT Extra"] = tatExtra
+    row["Penalty"] = penalty
+    row["Price After Penalty"] = round2((rate * (100 - penalty)) / 100)
+    return true
+  }
+
+  async function processRow(row: TripStatusRow): Promise<void> {
+    const billingRow = row as BillingRow
+    billingRow["Rate"] = null
+    billingRow["TAT Days"] = null
+    billingRow["TAT Extra"] = null
+    billingRow["Penalty"] = null
+    billingRow["Price After Penalty"] = null
+    billingRow["Compared Branches And Distances"] = null
+
+    const { outcome: zone, comparison } = await classify(row)
+    billingRow["Compared Branches And Distances"] = comparison
+
+    if (zone === null) {
+      summary.unclassified++
+      return
+    }
+    if (zone === ROUTE_UNAVAILABLE_MARKER) {
+      row.in_out_remote = ROUTE_UNAVAILABLE_MARKER
+      summary.routeUnavailable++
+      return
+    }
+    if (zone === INVALID_COORDINATES_MARKER) {
+      row.in_out_remote = INVALID_COORDINATES_MARKER
+      summary.invalidCoordinates++
+      return
+    }
+
+    row.in_out_remote = zone
+    if (zone === "IN") summary.classification.in++
+    else if (zone === "OUT") summary.classification.out++
+    else summary.classification.remote++
+
+    if (applyBilling(billingRow, zone)) {
+      summary.billed++
+      summary.totalAmount += billingRow["Price After Penalty"] ?? 0
+    } else {
+      summary.tatUnavailable++
+    }
+  }
+
+  let cursor = 0
+  const workerCount = Math.max(1, Math.min(ROUTE_CONCURRENCY, rows.length))
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (cursor < rows.length) {
+        const row = rows[cursor++]
+        await processRow(row)
+      }
+    })
+  )
+
+  summary.totalAmount = round2(summary.totalAmount)
+  return { rows: rows as BillingRow[], summary }
 }

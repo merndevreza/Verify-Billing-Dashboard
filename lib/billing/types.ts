@@ -29,20 +29,42 @@ export interface TripStatusRow {
   ApplicationStatus: string
 }
 
-/** A trip-status row plus the values this app calculates. */
-export interface BilledRow extends TripStatusRow {
-  /** Normalised in_out_remote: "IN" | "OUT" | "REMOTE" | "" (unrecognised). */
-  zone: "IN" | "OUT" | "REMOTE" | ""
-  /** Rate applied to this row (0 when the zone is unrecognised). */
-  amount: number
+/** The columns appended to the report, exactly as they must appear. */
+export const BILLING_COLUMN_HEADERS = [
+  "Rate",
+  "TAT Days",
+  "TAT Extra",
+  "Penalty",
+  "Price After Penalty",
+  "Compared Branches And Distances",
+] as const
+
+export interface BillingColumns {
+  "Rate": number | null
+  "TAT Days": number | null
+  "TAT Extra": number | null
+  "Penalty": number | null
+  "Price After Penalty": number | null
+  /** Audit trail: every branch compared for this trip and its road distance. */
+  "Compared Branches And Distances": string | null
 }
 
+/** A trip-status row with the calculated billing columns appended. */
+export interface BillingRow extends TripStatusRow, BillingColumns {}
+
+/** Aggregated result of one billing run (also persisted as summary.json). */
 export interface BillSummary {
   totalRows: number
-  inStation: { count: number; amount: number }
-  outStation: { count: number; amount: number }
-  remote: { count: number; amount: number }
-  /** Rows whose in_out_remote was not IN / OUT / REMOTE — billed 0. */
-  unmatched: number
+  /** Rows with a final IN/OUT/REMOTE classification and a full bill amount. */
+  billed: number
+  classification: { in: number; out: number; remote: number }
+  /** Rows marked ROUTE_DISTANCE_UNAVAILABLE — billing columns left empty. */
+  routeUnavailable: number
+  /** Rows with missing/invalid coordinates that needed routing. */
+  invalidCoordinates: number
+  /** Rows classified but with an unparseable Receive/Verification date. */
+  tatUnavailable: number
+  /** Rows whose original in_out_remote was not IN/OUT/REMOTE. */
+  unclassified: number
   totalAmount: number
 }

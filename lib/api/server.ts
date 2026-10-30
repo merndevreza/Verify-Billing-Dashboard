@@ -131,9 +131,10 @@ export interface BackendFile {
 /** POST to a backend endpoint that streams back a file (e.g. an .xls export). */
 async function backendFetchFile(
   url: string,
-  body: unknown
+  body: unknown,
+  tokenOverride?: string
 ): Promise<BackendFile> {
-  const token = await getSessionToken()
+  const token = tokenOverride ?? (await getSessionToken())
   if (!token) {
     throw new ApiErrorClass({
       status: 401,
@@ -197,8 +198,8 @@ export const billing = {
   },
 
   /** Trip-status export: the backend answers with an .xls file. */
-  downloadTripStatus: async (body: TripStatusRequest) => {
-    return backendFetchFile(Endpoints.BILL.GET_TRIP_STATUS, body)
+  downloadTripStatus: async (body: TripStatusRequest, token?: string) => {
+    return backendFetchFile(Endpoints.BILL.GET_TRIP_STATUS, body, token)
   },
 }
 
