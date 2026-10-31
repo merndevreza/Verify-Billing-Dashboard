@@ -94,8 +94,8 @@ export default function Header({ onMenuClick }: HeaderProps) {
             }
           >
             <span className="sr-only">Open account menu</span>
-            <Avatar className="size-5">
-              <AvatarFallback className="text-[0.625rem]">
+            <Avatar className="size-6">
+              <AvatarFallback className="text-xs">
                 {initials}
               </AvatarFallback>
             </Avatar>
@@ -117,7 +117,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout}>
-              <LogOutIcon className="size-3.5" />
+              <LogOutIcon className="size-4" />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

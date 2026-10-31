@@ -14,6 +14,7 @@ import {
   billingReportFileName,
   buildBillingWorkbook,
 } from "@/lib/billing/report"
+import { branchesForOrgs } from "@/lib/billing/org-branches"
 import { newRunId, saveRunFile } from "@/lib/billing/storage"
 import type { CalculateBillPayload } from "@/lib/types/billing"
 
@@ -43,9 +44,16 @@ function validate(p: Partial<CalculateBillPayload> | null): string | null {
   if (p.dateFrom! > p.dateTill!) return "dateFrom must not be after dateTill"
   if (!Array.isArray(p.org_id) || p.org_id.length === 0)
     return "org_id must be a non-empty array"
-  if (!Array.isArray(p.status) || p.status.length === 0)
-    return "status must be a non-empty array"
-  if (p.action_date_type !== "START_DATE" && p.action_date_type !== "END_DATE")
+  if (
+    p.status !== undefined &&
+    (!Array.isArray(p.status) || p.status.some((s) => typeof s !== "number"))
+  )
+    return "status must be an array of numbers"
+  if (
+    p.action_date_type !== undefined &&
+    p.action_date_type !== "START_DATE" &&
+    p.action_date_type !== "END_DATE"
+  )
     return "action_date_type must be START_DATE or END_DATE"
   if (
     !p.rates ||
@@ -140,6 +148,9 @@ export async function POST(request: Request) {
       rates: payload.rates,
       penalties: payload.penalties,
       holidays: payload.holidays ?? [],
+      // Branch data only applies to orgs with a bundled dataset (Brac Bank
+      // PLC); anything else gets [] and keeps the backend classification.
+      branches: branchesForOrgs(payload.org_id) ?? [],
     })
 
     // 4. Generate the Excel report, archive it + the summary, return it.

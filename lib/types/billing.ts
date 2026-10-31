@@ -10,7 +10,8 @@ export interface BillFormValues {
   dateRange: DateRange
   organizationId: string
   statuses: number[]
-  action_date_type: ActionDateType
+  /** "" = unselected; kept controlled (never undefined) for the Select component. */
+  action_date_type?: ActionDateType | ""
   billingType: BillingType
   /** General weekly holidays as JS getDay() indexes (0 = Sunday … 6 = Saturday). */
   weeklyHolidays: number[]
@@ -39,8 +40,8 @@ export interface CalculateBillPayload {
   dateTill: string
   page: number
   org_id: string[]
-  status: number[]
-  action_date_type: ActionDateType
+  status?: number[]
+  action_date_type?: ActionDateType
   billingType: BillingType
   holidays: string[]
   rates: BillFormValues["rates"]

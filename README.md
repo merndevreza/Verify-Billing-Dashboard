@@ -1,6 +1,6 @@
 # Verify Billing Dashboard
 
-Standalone dashboard for billing calculation and per-organization **Excel report generation**, for Barikoi's Verify platform. It authenticates against the same backend as [verify-admin-dashboard-v3](../verify-admin-dashboard-v3) and calls the same existing backend APIs directly from the browser like v3 does (every request visible in the Network tab) — only the billing calculation and Excel report generation run server-side, in this app's own `/api/billing` route handlers.
+Standalone dashboard for billing calculation and per-organization **Excel report generation**, for Barikoi's Verify platform. It authenticates against the same backend as verify-admin-dashboard and calls the same existing backend APIs directly from the browser like v3 does (every request visible in the Network tab) — only the billing calculation and Excel report generation run server-side, in this app's own `/api/billing` route handlers.
 
 > Agent/project guide: [AGENTS.md](AGENTS.md) · Design system: [docs/design.md](docs/design.md) · Exploration findings: [docs/billing-analysis.md](docs/billing-analysis.md)
 
@@ -9,10 +9,10 @@ Standalone dashboard for billing calculation and per-organization **Excel report
 | Layer | Choice |
 | --- | --- |
 | Framework | Next.js 16 (App Router) + React 19 |
-| UI | shadcn/ui (base-ui based, `base-mira` style) + Tailwind CSS v4 |
+| UI | shadcn/ui (base-ui based, `base-nova` style) + Tailwind CSS v4 |
 | State | Redux Toolkit |
 | Auth | NextAuth v5 (beta) — Credentials provider, JWT strategy |
-| Routing distances | Self-hosted GraphHopper 11.1 (see [graphhopper-bd](../graphhopper-bd)) **or** Barikoi routing API — switchable with one import in `lib/billing/calculate.ts` |
+| Routing distances | Self-hosted GraphHopper 11.1 **or** Barikoi routing API — switchable with one import in `lib/billing/calculate.ts` |
 | Excel processing | SheetJS (`xlsx`) — reads the backend's BIFF `.xls`, writes the `.xlsx` report |
 | Icons / Notifications | lucide-react / sonner |
 

@@ -1,6 +1,6 @@
 # Design System — Verify Billing Dashboard
 
-UI built with shadcn/ui on base-ui primitives ("base-mira" style) + Tailwind CSS v4. This document defines the visual language so every page stays consistent. Light/dark themes via `next-themes` (class strategy).
+UI built with shadcn/ui on base-ui primitives ("base-nova" style) + Tailwind CSS v4. This document defines the visual language so every page stays consistent. Light/dark themes via `next-themes` (class strategy).
 
 ## Foundations
 
@@ -24,11 +24,11 @@ Token-driven (CSS variables in `app/globals.css`, oklch). Base palette: zinc neu
 
 - Sans: Inter (`--font-sans`), body default `text-sm`. Mono: Geist Mono (`--font-mono`) for numbers/code/version strings.
 - Scale in use: page title `text-lg font-semibold` · card titles `text-sm font-semibold` · body/labels `text-sm`/`text-xs` · helper/caption `text-xs text-muted-foreground` · version `text-[0.625rem] font-mono`.
-- The whole UI runs at compact shadcn base-mira sizing — buttons h-7, inputs compact, `text-xs/relaxed` — do not scale up per-page.
+- The whole UI runs at standard shadcn base-nova sizing — buttons h-8 default (`text-sm`), compact `xs`/`sm` variants only where density is needed (table toolbars) — do not scale up per-page.
 
 ### Radius & elevation
 
-- Radius scale from `--radius` (sm → 4xl). Cards, buttons, inputs use `rounded-md`; brand mark `rounded-md`.
+- Radius scale from `--radius` (sm → 4xl). Buttons/inputs/cards use the nova component defaults (`rounded-lg`); brand mark `rounded-md`.
 - Flat design: borders instead of heavy shadows. Shadows only for overlays (popover/sheet/dialog), provided by the ui components.
 
 ### Spacing & layout metrics
@@ -50,7 +50,7 @@ Token-driven (CSS variables in `app/globals.css`, oklch). Base palette: zinc neu
 
 - **Only shadcn/ui** (`components/ui/*`) — no antd, no other UI kits. Add with `npx shadcn@latest add <name>`.
 - **base-ui specifics:** custom triggers use `render={<Component />}` (NOT radix `asChild`); Checkbox `onCheckedChange` yields a boolean.
-- Icons: lucide-react with `Icon`-suffixed names (`MenuIcon`), sized `size-3.5` (inside buttons/nav) or `size-4` (standalone), `text-muted-foreground` for de-emphasis.
+- Icons: lucide-react with `Icon`-suffixed names (`MenuIcon`), sized `size-4` (inside buttons they auto-size via the component), `text-muted-foreground` for de-emphasis.
 - Buttons: `size="sm"` inline in headers, `size="default"` for form actions, `variant="outline"` secondary, `variant="ghost"` for icon actions, `variant="destructive"` errors-only. Full-width submit buttons `w-full` (login).
 - Forms: `Label` + `Input` in `grid gap-2`; inline field errors `text-xs text-destructive` under the field; `aria-invalid` on inputs.
 - Feedback: toasts via `sonner` (`toast.error/success`), inline state text `text-xs` (`text-destructive` for errors, `text-muted-foreground` for neutral status).

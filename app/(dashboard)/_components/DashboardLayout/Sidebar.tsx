@@ -20,8 +20,8 @@ export default function SidebarContent({ onNavigate }: SidebarContentProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-12 shrink-0 items-center gap-2 px-4">
-        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+      <div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
           <CalculatorIcon className="size-4" />
         </div>
         <span className="text-sm font-semibold">Verify Billing</span>
@@ -44,18 +44,18 @@ export default function SidebarContent({ onNavigate }: SidebarContentProps) {
               onClick={onNavigate}
               aria-current={isActive ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs/relaxed font-medium text-muted-foreground transition-colors",
+                "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted-foreground transition-colors",
                 "hover:bg-muted hover:text-foreground",
                 isActive && "bg-muted text-foreground"
               )}
             >
-              <Icon className="size-3.5" />
+              <Icon className="size-4" />
               {item.label}
             </Link>
           )
         })}
         {MENU_ITEMS.length === 0 && (
-          <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
+          <p className="px-2.5 py-2 text-sm text-muted-foreground">
             No pages yet
           </p>
         )}

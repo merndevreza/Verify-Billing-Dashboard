@@ -6,6 +6,7 @@
 
 import {
   branchesForDistrict,
+  districtBranchIndex,
   isDistrictSadarAddress,
   isDhakaDistrict,
   type Branch,
@@ -18,8 +19,8 @@ import {
 // Routing provider — pick ONE by commenting the other out.
 // 1. graphhopper: self-hosted GraphHopper (graphhopper-bd docker, GRAPHHOPPER_URL)
 // 2. barikoi-routing: Barikoi routing API (needs BARIKOI_API_KEY in .env)
-//import { haversineM, routeDistanceM } from "./graphhopper"
-import { haversineM, routeDistanceM } from "./barikoi-routing"
+import { haversineM, routeDistanceM } from "./graphhopper"
+//import { haversineM, routeDistanceM } from "./barikoi-routing"
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
 export interface BillingParams {
@@ -35,6 +36,12 @@ export interface BillingParams {
   }
   /** ISO calendar dates (yyyy-mm-dd) excluded from the TAT count. */
   holidays: string[]
+  /**
+   * The selected org's branch dataset (branchesForOrgs). Empty → the org has
+   * no bundled branch data: no Dhaka rule, no branch distance checks — the
+   * backend's OUT/REMOTE classification stands as-is.
+   */
+  branches: Branch[]
 }
 
 /** Completion SLA per zone, in days (Rule 5). */
@@ -86,6 +93,7 @@ export async function processBilling(
   params: BillingParams
 ): Promise<{ rows: BillingRow[]; summary: BillSummary }> {
   const holidays = new Set(params.holidays)
+  const districtIndex = districtBranchIndex(params.branches)
   const summary: BillSummary = {
     totalRows: rows.length,
     billed: 0,
@@ -147,6 +155,16 @@ export async function processBilling(
       }
     }
 
+    // Orgs without a bundled branch dataset: no reclassification — the
+    // backend's OUT/REMOTE stands (existing is OUT or REMOTE here).
+    if (params.branches.length === 0) {
+      return {
+        outcome: existing as Zone,
+        comparison:
+          "organization has no branch dataset; backend classification kept",
+      }
+    }
+
     // Confirmed rule: Dhaka-district trips are outside the metro here (inside
     // metro ones stay IN via Rule 1) — they are always OUT, no branch check.
     if (isDhakaDistrict(row.District)) {
@@ -154,7 +172,7 @@ export async function processBilling(
     }
 
     // Step B — eligible branches for this district (category "out" only).
-    const districtBranches = branchesForDistrict(row.District) ?? []
+    const districtBranches = branchesForDistrict(row.District, districtIndex) ?? []
     if (districtBranches.length === 0) {
       // Rule 11.B
       return {

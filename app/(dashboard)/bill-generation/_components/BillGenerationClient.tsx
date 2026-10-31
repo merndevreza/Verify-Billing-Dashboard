@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useForm, Controller } from "react-hook-form"
 import { CalendarIcon, XIcon } from "lucide-react"
 import type { DateRange } from "react-day-picker"
@@ -35,15 +35,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import DateRangeField from "./DateRangeField"
+import { BillingReportLoadingDialog } from "./BillingReportLoadingDialog"
 
 const WEEKDAYS = [
   { label: "Sunday", value: 0 },
@@ -70,13 +65,17 @@ const DEFAULT_VALUES: BillFormValues = {
   dateRange: { from: undefined, to: undefined },
   organizationId: "",
   statuses: [],
-  action_date_type: "END_DATE",
+  action_date_type: "",
   billingType: "trip",
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
   rates: { inStation: 150, outStation: 200, remote: 685 },
   penalties: { day1: 10, day2: 20, day3: 30, day4: 40, day5: 50, day6: 60, day7: 70 },
 }
+
+// Loading dialog keeps showing its completed state at least this long after
+// the response arrives, before closing.
+const DONE_DISPLAY_MS = 3000
 
 export default function BillGenerationClient() {
   const dispatch = useAppDispatch()
@@ -95,6 +94,7 @@ export default function BillGenerationClient() {
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<BillFormValues>({ defaultValues: DEFAULT_VALUES })
+  const [isFinishing, setIsFinishing] = useState(false)
 
   useEffect(() => {
     if (token && !user?.organizations?.length) dispatch(fetchOrganizations(token))
@@ -158,13 +158,14 @@ export default function BillGenerationClient() {
       dateTill: toISODate(data.dateRange.to!),
       page: 1,
       org_id: [data.organizationId],
-      status: data.statuses,
-      action_date_type: data.action_date_type,
       billingType: data.billingType,
       holidays: allHolidays,
       rates: data.rates,
       penalties: data.penalties,
     }
+    // Optional filters — omitted entirely so the backend call runs unfiltered.
+    if (data.statuses.length > 0) payload.status = data.statuses
+    if (data.action_date_type) payload.action_date_type = data.action_date_type
 
     const response = await fetch("/api/billing/calculate", {
       method: "POST",
@@ -202,6 +203,11 @@ export default function BillGenerationClient() {
         ? `Report downloaded — Tk ${Number(totalAmount).toLocaleString("en-IN")}${billedTrips ? ` (${billedTrips} billed trips)` : ""}`
         : "Billing report downloaded"
     )
+
+    // Show the dialog's completed state briefly, then close.
+    setIsFinishing(true)
+    await new Promise((resolve) => setTimeout(resolve, DONE_DISPLAY_MS))
+    setIsFinishing(false)
   }
 
   return (
@@ -221,7 +227,9 @@ export default function BillGenerationClient() {
             <CardTitle>Billing Period</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-2">
-            <Label>Date Range</Label>
+            <Label>
+              Date Range <span className="text-destructive">*</span>
+            </Label>
             <Controller
               control={control}
               name="dateRange"
@@ -251,7 +259,9 @@ export default function BillGenerationClient() {
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-3">
             <div className="grid gap-2">
-              <Label htmlFor="org">Organization</Label>
+              <Label htmlFor="org">
+                Organization <span className="text-destructive">*</span>
+              </Label>
               <Controller
                 control={control}
                 name="organizationId"
@@ -334,7 +344,7 @@ export default function BillGenerationClient() {
                     items={[{ value: "START_DATE", label: "Start Date" }, { value: "END_DATE", label: "End Date" }]}
                   >
                     <SelectTrigger className="w-full" id="action_date_type">
-                      <SelectValue />
+                      <SelectValue placeholder="Default" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="START_DATE">Start Date</SelectItem>
@@ -495,7 +505,9 @@ export default function BillGenerationClient() {
               ] as const
             ).map(({ key, label }) => (
               <div key={key} className="grid gap-2">
-                <Label htmlFor={`rate-${key}`}>{label}</Label>
+                <Label htmlFor={`rate-${key}`}>
+                  {label} <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id={`rate-${key}`}
                   type="number"
@@ -535,7 +547,9 @@ export default function BillGenerationClient() {
               ] as const
             ).map(({ key, label }) => (
               <div key={key} className="grid gap-2">
-                <Label htmlFor={`penalty-${key}`}>{label}</Label>
+                <Label htmlFor={`penalty-${key}`}>
+                  {label} <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id={`penalty-${key}`}
                   type="number"
@@ -575,21 +589,10 @@ export default function BillGenerationClient() {
 
       {/* Generation can take 1–2 minutes on large reports — modal + disabled
           submit keep the user from re-submitting or navigating away. */}
-      <Dialog open={isSubmitting}>
-        <DialogContent showCloseButton={false} className="max-w-xs">
-          <div className="flex items-start gap-3">
-            <Spinner className="mt-0.5 size-5" />
-            <div className="grid gap-1">
-              <DialogTitle>Generating billing report…</DialogTitle>
-              <DialogDescription>
-                Downloading trips, classifying In/Out/Remote and calculating
-                bills. This can take 1–2 minutes for large reports — please
-                keep this tab open.
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <BillingReportLoadingDialog
+        open={isSubmitting}
+        phase={isFinishing ? "done" : "running"}
+      />
     </div>
   )
 }

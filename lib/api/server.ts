@@ -116,8 +116,9 @@ export interface TripStatusRequest {
   dateTill: string
   page: number
   org_id: string[]
-  status: number[]
-  action_date_type: "START_DATE" | "END_DATE"
+  /** Omitted from the request body when undefined (no status filter). */
+  status?: number[]
+  action_date_type?: "START_DATE" | "END_DATE"
 }
 
 /** Result of an upstream endpoint that answers with a file download. */

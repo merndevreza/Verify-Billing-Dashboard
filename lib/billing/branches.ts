@@ -1,9 +1,6 @@
-// Bank branch data + district matching for the Out/Remote classification.
-//
-// The branch list is bundled from data/brac_branches.json (typed below with
-// the ACTUAL property names in that file: max_distance_km, lon, category).
-
-import branchData from "@/data/brac_branches.json"
+// Branch domain logic for the Out/Remote classification: the Branch shape,
+// district matching and address heuristics. Which ORG owns which branch
+// dataset is decided in org-branches.ts, not here.
 
 export interface Branch {
   id: number
@@ -19,8 +16,6 @@ export interface Branch {
   /** "in" = inside-Dhaka branch, "out" = branch eligible for the road-distance check. */
   category: "in" | "out"
 }
-
-export const BRANCHES = branchData as Branch[]
 
 /** Lowercase, strip everything non-alphanumeric: "Cox's Bazar" → "coxsbazar". */
 export function normalizeName(value: unknown): string {
@@ -51,23 +46,32 @@ function canonicalDistrict(district: unknown): string {
   return DISTRICT_ALIASES[norm] ?? norm
 }
 
-/** district → eligible branches (category "out" only), built once per process. */
-const branchesByDistrict = new Map<string, Branch[]>()
-for (const branch of BRANCHES) {
-  if (branch.category !== "out") continue
-  const key = canonicalDistrict(branch.district)
-  const list = branchesByDistrict.get(key)
-  if (list) list.push(branch)
-  else branchesByDistrict.set(key, [branch])
+/**
+ * district → eligible branches (category "out" only) for one org's dataset.
+ * Build once per run and pass the index to branchesForDistrict().
+ */
+export function districtBranchIndex(branches: Branch[]): Map<string, Branch[]> {
+  const index = new Map<string, Branch[]>()
+  for (const branch of branches) {
+    if (branch.category !== "out") continue
+    const key = canonicalDistrict(branch.district)
+    const list = index.get(key)
+    if (list) list.push(branch)
+    else index.set(key, [branch])
+  }
+  return index
 }
 
 /**
  * Eligible branches (category "out") for a trip's District column value.
  * null when the trip has no district — distinct from "district has no branch".
  */
-export function branchesForDistrict(tripDistrict: unknown): Branch[] | null {
+export function branchesForDistrict(
+  tripDistrict: unknown,
+  index: Map<string, Branch[]>
+): Branch[] | null {
   if (!String(tripDistrict ?? "").trim()) return null
-  return branchesByDistrict.get(canonicalDistrict(tripDistrict)) ?? []
+  return index.get(canonicalDistrict(tripDistrict)) ?? []
 }
 
 /**
