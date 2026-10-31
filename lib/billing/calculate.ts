@@ -19,12 +19,13 @@ import {
 // Routing provider — pick ONE by commenting the other out.
 // 1. graphhopper: self-hosted GraphHopper (graphhopper-bd docker, GRAPHHOPPER_URL)
 // 2. barikoi-routing: Barikoi routing API (needs BARIKOI_API_KEY in .env)
-import { haversineM, routeDistanceM } from "./graphhopper"
-//import { haversineM, routeDistanceM } from "./barikoi-routing"
-import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
-/** Re-exported so callers can archive which provider produced the distances. */
-export { ROUTER_PROVIDER } from "./graphhopper"
+//import { haversineM, routeDistanceM } from "./graphhopper"
+// export { ROUTER_PROVIDER } from "./graphhopper"
+import { haversineM, routeDistanceM } from "./barikoi-routing"
+export { ROUTER_PROVIDER } from "./barikoi-routing"
+
+import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
 export interface BillingParams {
   rates: { inStation: number; outStation: number; remote: number }
