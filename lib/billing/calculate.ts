@@ -23,6 +23,9 @@ import { haversineM, routeDistanceM } from "./graphhopper"
 //import { haversineM, routeDistanceM } from "./barikoi-routing"
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
+/** Re-exported so callers can archive which provider produced the distances. */
+export { ROUTER_PROVIDER } from "./graphhopper"
+
 export interface BillingParams {
   rates: { inStation: number; outStation: number; remote: number }
   penalties: {
@@ -147,21 +150,24 @@ export async function processBilling(
       return { outcome: null, comparison: null }
     }
 
+    // Orgs without a bundled branch dataset: no reclassification — the
+    // backend's OUT/REMOTE stands (existing is OUT or REMOTE here). This also
+    // skips the district-sadar rule: the rule set belongs to the branch
+    // dataset, so orgs without one get the backend's verdict verbatim.
+    if (params.branches.length === 0) {
+      const kept: Zone = existing === "OUT" ? "OUT" : "REMOTE"
+      return {
+        outcome: kept,
+        comparison:
+          "organization has no branch dataset; backend classification kept",
+      }
+    }
+
     // Step A — District Sadar check, no routing.
     if (isDistrictSadarAddress(row.District, row.Address)) {
       return {
         outcome: "OUT",
         comparison: "district-sadar address; no branch check",
-      }
-    }
-
-    // Orgs without a bundled branch dataset: no reclassification — the
-    // backend's OUT/REMOTE stands (existing is OUT or REMOTE here).
-    if (params.branches.length === 0) {
-      return {
-        outcome: existing as Zone,
-        comparison:
-          "organization has no branch dataset; backend classification kept",
       }
     }
 

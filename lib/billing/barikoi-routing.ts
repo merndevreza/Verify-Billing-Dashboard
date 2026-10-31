@@ -12,6 +12,9 @@ const PROFILE = "motorcycle"
 const TIMEOUT_MS = 30_000
 const RETRIES = 1
 
+/** Provider identity for run archives — graphhopper.ts defines its own. */
+export const ROUTER_PROVIDER = "barikoi"
+
 export class RouteDistanceError extends Error {
   constructor(message: string) {
     super(message)

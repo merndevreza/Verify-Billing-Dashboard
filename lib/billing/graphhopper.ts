@@ -11,6 +11,9 @@ const PROFILE = "motorcycle"
 const TIMEOUT_MS = 15_000
 const RETRIES = 1
 
+/** Provider identity for run archives — barikoi-routing.ts defines its own. */
+export const ROUTER_PROVIDER = "graphhopper"
+
 export class RouteDistanceError extends Error {
   constructor(message: string) {
     super(message)

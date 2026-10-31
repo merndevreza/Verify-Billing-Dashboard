@@ -40,14 +40,23 @@ export const ORG_BRANCHES: OrgBranches[] = orgData.organizations.map((org) => {
   }
 })
 
+/** A resolved branch selection: the dataset plus the org it belongs to. */
+export interface OrgBranchSelection {
+  /** Org name the dataset was resolved for — for run archives/audit logs. */
+  orgName: string
+  branches: Branch[]
+}
+
 /**
  * Branch dataset for the selected org(s), or null when any selected org has
  * no bundled dataset — branch checks must never leak into a mixed selection.
  * Entries are the org uuid (what the front-end sends); numeric ids also work.
  */
-export function branchesForOrgs(orgIds: unknown): Branch[] | null {
+export function branchesForOrgs(
+  orgIds: unknown
+): OrgBranchSelection | null {
   if (!Array.isArray(orgIds) || orgIds.length === 0) return null
-  let dataset: Branch[] | null = null
+  let selection: OrgBranchSelection | null = null
   for (const raw of orgIds) {
     const key = String(raw).trim().toLowerCase()
     const numericId = Number(raw)
@@ -57,7 +66,7 @@ export function branchesForOrgs(orgIds: unknown): Branch[] | null {
         (Number.isFinite(numericId) && org.id === numericId)
     )
     if (!entry?.branches) return null
-    dataset = entry.branches
+    selection = { orgName: entry.name, branches: entry.branches }
   }
-  return dataset
+  return selection
 }

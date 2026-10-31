@@ -8,8 +8,8 @@
 // penalties → generate the billing .xlsx and return it as a download.
 
 import { apiErrorResponse, serverAPI } from "@/lib/api/server"
-import { processBilling } from "@/lib/billing/calculate"
-import { parseTripStatusFile, TRIP_STATUS_COLUMNS } from "@/lib/billing/parse"
+import { processBilling, ROUTER_PROVIDER } from "@/lib/billing/calculate"
+import { parseTripStatusFile } from "@/lib/billing/parse"
 import {
   billingReportFileName,
   buildBillingWorkbook,
@@ -139,18 +139,33 @@ export async function POST(request: Request) {
       )
     }
 
-    // Column order snapshot (before the billing keys are appended).
-    const baseHeaders = parsed.rows.length
-      ? Object.keys(parsed.rows[0])
-      : [...TRIP_STATUS_COLUMNS]
+    // A headers-only export means the filters matched nothing — that is an
+    // input mistake, not a bill. Fail loudly instead of generating a 0-row
+    // report.
+    if (parsed.rows.length === 0) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "The downloaded trip file contains no rows — check the date range, organization and status filters",
+          runId,
+          sourceFile,
+        },
+        { status: 422 }
+      )
+    }
 
+    // Column order snapshot (before the billing keys are appended).
+    const baseHeaders = Object.keys(parsed.rows[0])
+
+    const orgBranches = branchesForOrgs(payload.org_id)
     const { rows, summary } = await processBilling(parsed.rows, {
       rates: payload.rates,
       penalties: payload.penalties,
       holidays: payload.holidays ?? [],
       // Branch data only applies to orgs with a bundled dataset (Brac Bank
       // PLC); anything else gets [] and keeps the backend classification.
-      branches: branchesForOrgs(payload.org_id) ?? [],
+      branches: orgBranches?.branches ?? [],
     })
 
     // 4. Generate the Excel report, archive it + the summary, return it.
@@ -164,7 +179,17 @@ export async function POST(request: Request) {
     await saveRunFile(
       runId,
       "summary.json",
-      JSON.stringify({ request: payload, summary }, null, 2)
+      JSON.stringify(
+        {
+          request: payload,
+          // Which org's branch rules were applied (null = backend verdicts kept).
+          branchDatasetOrg: orgBranches?.orgName ?? null,
+          routingProvider: ROUTER_PROVIDER,
+          summary,
+        },
+        null,
+        2
+      )
     )
 
     const fileName = billingReportFileName(payload.dateFrom, payload.dateTill)
@@ -173,6 +198,8 @@ export async function POST(request: Request) {
         "Content-Type": XLSX_CONTENT_TYPE,
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Content-Length": String(output.byteLength),
+        // Handle to the archived run (.data/billing/<runId>/) for audits.
+        "X-Run-Id": runId,
         "X-Total-Rows": String(summary.totalRows),
         "X-Billed-Trips": String(summary.billed),
         "X-Total-Amount": String(summary.totalAmount),
