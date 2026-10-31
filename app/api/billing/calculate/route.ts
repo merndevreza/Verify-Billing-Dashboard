@@ -169,12 +169,11 @@ export async function POST(request: Request) {
     })
 
     // 4. Generate the Excel report, archive it + the summary, return it.
-    const output = buildBillingWorkbook(
-      rows,
-      baseHeaders,
-      parsed.dateFormats,
-      summary
-    )
+    const output = buildBillingWorkbook(rows, baseHeaders, parsed.dateFormats, summary, {
+      dateFrom: payload.dateFrom,
+      dateTill: payload.dateTill,
+      orgName: orgBranches?.orgName ?? null,
+    })
     await saveRunFile(runId, "billing_report.xlsx", output)
     await saveRunFile(
       runId,
