@@ -27,10 +27,12 @@ export interface TripStatusRow {
   Thana: string
   in_out_remote: string
   ApplicationStatus: string
+  api_submission_time: string | number
 }
 
 /** The columns appended to the report, exactly as they must appear. */
 export const BILLING_COLUMN_HEADERS = [
+  "Submission Date",
   "Rate",
   "TAT Days",
   "TAT Extra",
@@ -40,6 +42,7 @@ export const BILLING_COLUMN_HEADERS = [
 ] as const
 
 export interface BillingColumns {
+  "Submission Date": string | null
   "Rate": number | null
   "TAT Days": number | null
   "TAT Extra": number | null

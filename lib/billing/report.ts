@@ -170,6 +170,7 @@ export function buildBillingWorkbook(
   // Widen the appended columns so distances/audit text are readable on open.
   ws["!cols"] = header.map((name) => {
     if (name === "Compared Branches And Distances") return { wch: 60 }
+    if (name === "Submission Date") return { wch: 14 }
     if (BILLING_COLUMN_HEADERS.includes(name as (typeof BILLING_COLUMN_HEADERS)[number])) {
       return { wch: 10 }
     }

@@ -254,13 +254,15 @@ export async function processBilling(
     row["Rate"] = rate
 
     const receiveISO = parseCalendarDate(row["Receive Date"])
+    const submissionISO = parseCalendarDate(row["api_submission_time"])
     const verifyISO = parseCalendarDate(row.VerificationDateTime)
-    if (!receiveISO || !verifyISO) return false
+    if (!receiveISO || !verifyISO || !submissionISO) return false
 
+    row["Submission Date"] = submissionISO
     const tatDays =
-      diffCalendarDays(receiveISO, verifyISO) +
+      diffCalendarDays(receiveISO, submissionISO) +
       1 -
-      countHolidaysBetween(receiveISO, verifyISO, holidays)
+      countHolidaysBetween(receiveISO, submissionISO, holidays)
     const tatExtra = Math.max(0, tatDays - EXPECTED_DAYS[zone])
     const penalty = Math.min(
       tatExtra * PENALTY_PERCENT_PER_DAY,
@@ -275,6 +277,7 @@ export async function processBilling(
 
   async function processRow(row: TripStatusRow): Promise<void> {
     const billingRow = row as BillingRow
+    billingRow["Submission Date"] = null
     billingRow["Rate"] = null
     billingRow["TAT Days"] = null
     billingRow["TAT Extra"] = null

@@ -15,6 +15,7 @@ export const REQUIRED_COLUMNS = [
   "District",
   "Address",
   "in_out_remote",
+  "api_submission_time",
 ] as const
 
 /** Column order preserved into the report (matches the retired xls export). */
@@ -46,6 +47,7 @@ export const TRIP_STATUS_COLUMNS = [
   "Thana",
   "in_out_remote",
   "ApplicationStatus",
+  "api_submission_time",
 ] as const
 
 export interface ParsedTripFile {
