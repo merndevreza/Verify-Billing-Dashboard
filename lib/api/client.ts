@@ -45,28 +45,10 @@ export const organizations = {
 }
 
 // ============================================================================
-// BILLING (existing backend endpoints — input data for the reports)
-// ============================================================================
-
-export type TripHistoryParams = {
-  dateFrom?: string
-  dateTill?: string
-  org_id?: string
-}
-
-export const billing = {
-  /** Trip history input data for billing reports. */
-  getTripHistory: async (params?: TripHistoryParams, token?: string) => {
-    return apiGet<any>(Endpoints.BILL.GET_TRIP_HISTORY, params, { token })
-  },
-}
-
-// ============================================================================
 // Export all as a single object
 // ============================================================================
 
 export const clientAPI = {
   auth,
   organizations,
-  billing,
 }

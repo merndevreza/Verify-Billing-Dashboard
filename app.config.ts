@@ -19,14 +19,8 @@ const COMMON = {
   GET_GROUP: BASE_URL + "/api/v2/groups", // organization list
 }
 
-const DASHBOARD = {
-  GET_SUMMARY: BASE_URL + "/api/v2/dashboard/org/summery",
-}
-
 const BILL = {
-  CALCULATE_BILL: BASE_URL + "/api/v2/calculate-billing",
-  GET_TRIP_HISTORY: BASE_URL + "/api/v2/reports/trip-history",
   GET_TRIP_STATUS: BASE_URL + "/api/v2/reports/trip-status", // responds with an .xls download
 }
 
-export { AUTH, COMMON, DASHBOARD, BILL }
+export { AUTH, COMMON, BILL }

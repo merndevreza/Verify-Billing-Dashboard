@@ -1,30 +1,15 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit"
 import { apiPost, clientAPI } from "@/lib/api"
-import type { TripHistoryParams } from "@/lib/api/client"
 
 // ============================================================================
 // State shape
 // ============================================================================
-
-interface ListMeta {
-  currentPage: number
-  lastPage: number
-  perPage: number
-  total: number
-}
 
 interface BillingState {
   // Organizations drive the per-org bill generation dropdown
   organizations: {
     items: any[]
     isLoaded: boolean
-    isLoading: boolean
-    error: string | null
-  }
-  // Trip history input data for the report
-  tripHistory: {
-    items: any[]
-    meta: ListMeta | null
     isLoading: boolean
     error: string | null
   }
@@ -40,12 +25,6 @@ const initialState: BillingState = {
   organizations: {
     items: [],
     isLoaded: false,
-    isLoading: false,
-    error: null,
-  },
-  tripHistory: {
-    items: [],
-    meta: null,
     isLoading: false,
     error: null,
   },
@@ -69,21 +48,6 @@ export const fetchOrganizations = createAsyncThunk(
       return response
     } catch (error: any) {
       return rejectWithValue(error.message || "Failed to fetch organizations")
-    }
-  }
-)
-
-export const fetchTripHistory = createAsyncThunk(
-  "billing/fetchTripHistory",
-  async (
-    args: { params?: TripHistoryParams; token?: string } | undefined,
-    { rejectWithValue }
-  ) => {
-    try {
-      const { params, token } = args ?? {}
-      return await clientAPI.billing.getTripHistory(params, token)
-    } catch (error: any) {
-      return rejectWithValue(error.message || "Failed to fetch trip history")
     }
   }
 )
@@ -113,11 +77,6 @@ const billingSlice = createSlice({
       state.calculation.data = null
       state.calculation.error = null
     },
-    clearTripHistory: (state) => {
-      state.tripHistory.items = []
-      state.tripHistory.meta = null
-      state.tripHistory.error = null
-    },
   },
   extraReducers: (builder) => {
     builder
@@ -138,33 +97,6 @@ const billingSlice = createSlice({
         state.organizations.isLoaded = true
         state.organizations.error = action.payload as string
       })
-      // Trip history
-      .addCase(fetchTripHistory.pending, (state) => {
-        state.tripHistory.isLoading = true
-        state.tripHistory.error = null
-      })
-      .addCase(fetchTripHistory.fulfilled, (state, action) => {
-        state.tripHistory.isLoading = false
-        const payload = action.payload ?? {}
-        const list = Array.isArray(payload)
-          ? payload
-          : (payload.data ?? payload.trips ?? [])
-        state.tripHistory.items = Array.isArray(list) ? list : []
-        const paginator = payload.trips ?? payload
-        state.tripHistory.meta =
-          paginator?.current_page !== undefined
-            ? {
-                currentPage: paginator.current_page,
-                lastPage: paginator.last_page ?? 1,
-                perPage: paginator.per_page ?? 0,
-                total: paginator.total ?? 0,
-              }
-            : null
-      })
-      .addCase(fetchTripHistory.rejected, (state, action) => {
-        state.tripHistory.isLoading = false
-        state.tripHistory.error = action.payload as string
-      })
       // Calculation
       .addCase(calculateBill.pending, (state) => {
         state.calculation.isCalculating = true
@@ -181,6 +113,6 @@ const billingSlice = createSlice({
   },
 })
 
-export const { clearCalculation, clearTripHistory } = billingSlice.actions
+export const { clearCalculation } = billingSlice.actions
 
 export default billingSlice.reducer

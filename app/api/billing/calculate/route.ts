@@ -33,9 +33,6 @@ function badRequest(message: string) {
 const isNum = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v) && v >= 0
 
-const isPercent = (v: unknown): v is number =>
-  typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100
-
 /** Returns an error message, or null when the payload is valid. */
 function validate(p: Partial<CalculateBillPayload> | null): string | null {
   if (!p || typeof p !== "object") return "Request body must be JSON"
@@ -62,17 +59,6 @@ function validate(p: Partial<CalculateBillPayload> | null): string | null {
     !isNum(p.rates.remote)
   )
     return "rates.inStation, rates.outStation and rates.remote must be numbers"
-  if (
-    !p.penalties ||
-    !isPercent(p.penalties.day1) ||
-    !isPercent(p.penalties.day2) ||
-    !isPercent(p.penalties.day3) ||
-    !isPercent(p.penalties.day4) ||
-    !isPercent(p.penalties.day5) ||
-    !isPercent(p.penalties.day6) ||
-    !isPercent(p.penalties.day7)
-  )
-    return "penalties.day1–day7 must be percentages between 0 and 100"
   if (
     p.holidays !== undefined &&
     (!Array.isArray(p.holidays) ||
@@ -161,7 +147,6 @@ export async function POST(request: Request) {
     const orgBranches = branchesForOrgs(payload.org_id)
     const { rows, summary } = await processBilling(parsed.rows, {
       rates: payload.rates,
-      penalties: payload.penalties,
       holidays: payload.holidays ?? [],
       // Branch data only applies to orgs with a bundled dataset (Brac Bank
       // PLC); anything else gets [] and keeps the backend classification.

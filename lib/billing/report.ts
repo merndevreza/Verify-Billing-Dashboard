@@ -14,8 +14,8 @@ import {
  */
 const DEFAULT_DATE_FORMAT = "m/d/yy h:mm"
 
-/** Mirror of the penalty ladder length in calculate.ts (day1…day7). */
-const MAX_PENALTY_DAYS = 7
+/** Mirror of the penalty rule in calculate.ts: 10% per extra TAT day, capped at 100%. */
+const MAX_PENALTY_DAYS = 10
 
 /** Run context shown on the summary sheet. */
 export interface BillingReportMeta {
@@ -29,7 +29,7 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-/** One "Penalties by TAT Extra" row: bucket 0…6 plus a "7+" bucket. */
+/** One "Penalties by TAT Extra" row: bucket 0…9 plus a "10+" bucket. */
 interface PenaltyBucket {
   label: string
   trips: number

@@ -29,15 +29,6 @@ import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
 export interface BillingParams {
   rates: { inStation: number; outStation: number; remote: number }
-  penalties: {
-    day1: number
-    day2: number
-    day3: number
-    day4: number
-    day5: number
-    day6: number
-    day7: number
-  }
   /** ISO calendar dates (yyyy-mm-dd) excluded from the TAT count. */
   holidays: string[]
   /**
@@ -57,8 +48,9 @@ export const ROUTE_UNAVAILABLE_MARKER = "ROUTE_DISTANCE_UNAVAILABLE"
 /** Row needs routing but its coordinates are missing/invalid. */
 export const INVALID_COORDINATES_MARKER = "INVALID_COORDINATES"
 
-/** Penalties are defined for up to 7 extra days; beyond that day7 applies. */
-const MAX_PENALTY_EXTRA_DAYS = 7
+/** Rule 6 — SLA-breach penalty: 10% per extra TAT day, capped at 100%. */
+const PENALTY_PERCENT_PER_DAY = 10
+const MAX_PENALTY_PERCENT = 100
 const ROUTE_CONCURRENCY = 8
 /** Consecutive route failures before the router is treated as down for the rest of the run. */
 const ROUTE_BREAKER_THRESHOLD = 30
@@ -67,25 +59,6 @@ const CACHE_PRECISION = 4
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100
-}
-
-const PENALTY_KEYS = [
-  "day1",
-  "day2",
-  "day3",
-  "day4",
-  "day5",
-  "day6",
-  "day7",
-] as const
-
-function penaltyPercentFor(
-  extraDays: number,
-  penalties: BillingParams["penalties"]
-): number {
-  if (extraDays <= 0) return 0
-  const day = Math.min(extraDays, MAX_PENALTY_EXTRA_DAYS)
-  return penalties[PENALTY_KEYS[day - 1]]
 }
 
 function toCoord(value: unknown): number {
@@ -289,7 +262,10 @@ export async function processBilling(
       1 -
       countHolidaysBetween(receiveISO, verifyISO, holidays)
     const tatExtra = Math.max(0, tatDays - EXPECTED_DAYS[zone])
-    const penalty = penaltyPercentFor(tatExtra, params.penalties)
+    const penalty = Math.min(
+      tatExtra * PENALTY_PERCENT_PER_DAY,
+      MAX_PENALTY_PERCENT
+    )
     row["TAT Days"] = tatDays
     row["TAT Extra"] = tatExtra
     row["Penalty"] = penalty

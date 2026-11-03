@@ -70,7 +70,6 @@ const DEFAULT_VALUES: BillFormValues = {
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
   rates: { inStation: 150, outStation: 200, remote: 685 },
-  penalties: { day1: 10, day2: 20, day3: 30, day4: 40, day5: 50, day6: 60, day7: 70 },
 }
 
 // Loading dialog keeps showing its completed state at least this long after
@@ -161,7 +160,6 @@ export default function BillGenerationClient() {
       billingType: data.billingType,
       holidays: allHolidays,
       rates: data.rates,
-      penalties: data.penalties,
     }
     // Optional filters — omitted entirely so the backend call runs unfiltered.
     if (data.statuses.length > 0) payload.status = data.statuses
@@ -522,50 +520,6 @@ export default function BillGenerationClient() {
                 {errors.rates?.[key] && (
                   <p className="text-xs text-destructive">
                     {errors.rates[key]?.message}
-                  </p>
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-
-        {/* ── SLA Penalties ── */}
-        <Card>
-          <CardHeader>
-            <CardTitle>SLA Breach Penalties (%)</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4 sm:grid-cols-4">
-            {(
-              [
-                { key: "day1", label: "1 Day" },
-                { key: "day2", label: "2 Days" },
-                { key: "day3", label: "3 Days" },
-                { key: "day4", label: "4 Days" },
-                { key: "day5", label: "5 Days" },
-                { key: "day6", label: "6 Days" },
-                { key: "day7", label: "7 Days" },
-              ] as const
-            ).map(({ key, label }) => (
-              <div key={key} className="grid gap-2">
-                <Label htmlFor={`penalty-${key}`}>
-                  {label} <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id={`penalty-${key}`}
-                  type="number"
-                  min={0}
-                  max={100}
-                  {...register(`penalties.${key}`, {
-                    required: "Required",
-                    min: { value: 0, message: "Must be ≥ 0" },
-                    max: { value: 100, message: "Must be ≤ 100" },
-                    valueAsNumber: true,
-                  })}
-                  aria-invalid={!!errors.penalties?.[key]}
-                />
-                {errors.penalties?.[key] && (
-                  <p className="text-xs text-destructive">
-                    {errors.penalties[key]?.message}
                   </p>
                 )}
               </div>

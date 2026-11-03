@@ -22,16 +22,6 @@ export interface BillFormValues {
     outStation: number
     remote: number
   }
-  /** SLA-breach penalty percentage per delayed day. */
-  penalties: {
-    day1: number
-    day2: number
-    day3: number
-    day4: number
-    day5: number
-    day6: number
-    day7: number
-  }
 }
 
 /** Payload posted to the billing calculate route handler. */
@@ -45,5 +35,4 @@ export interface CalculateBillPayload {
   billingType: BillingType
   holidays: string[]
   rates: BillFormValues["rates"]
-  penalties: BillFormValues["penalties"]
 }
