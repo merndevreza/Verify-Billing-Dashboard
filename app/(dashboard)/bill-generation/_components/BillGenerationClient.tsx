@@ -211,11 +211,7 @@ export default function BillGenerationClient() {
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6">
       <div>
-        <h2 className="text-lg font-semibold">Bill Generation</h2>
-        <p className="text-sm text-muted-foreground">
-          Configure billing parameters and generate a CSV report per
-          organization.
-        </p>
+        <h2 className="text-lg font-semibold">Bill Generation</h2> 
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

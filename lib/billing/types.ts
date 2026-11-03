@@ -1,4 +1,4 @@
-/** One row of the backend trip-status .xls export (header names as in the file). */
+/** One row of the backend sla-status report (field names match the retired xls export). */
 export interface TripStatusRow {
   DepositId: string | number
   RefId: string | number

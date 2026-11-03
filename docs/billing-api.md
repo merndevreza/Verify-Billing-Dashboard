@@ -8,8 +8,8 @@ in the order it touches them.
 BillGenerationClient.tsx        route.ts                    lib/billing/*
 ┌────────────────────┐   POST  ┌──────────────────┐
 │ form ── onSubmit() │ ──────▶ │ validate()       │
-│ fetch + Bearer     │         │ downloadTripStatus ──▶ backend (trip-status .xls)
-└────────────────────┘         │ parseTripStatusFile
+│ fetch + Bearer     │         │ fetchSlaStatus ──▶ backend (sla-status JSON)
+└────────────────────┘         │ parseSlaStatusResponse
                                │ branchesForOrgs
                                │ processBilling ──▶ graphhopper (road distances)
                                │ buildBillingWorkbook
@@ -51,15 +51,19 @@ client, per AGENTS.md).
 2. `bearerToken()` extracts the Bearer token from the request header (falls
    back to the NextAuth session token deeper down).
 
-## Step 2 — Download the input data from the backend
+## Step 2 — Fetch the input data from the backend
 
-**File:** `lib/api/server.ts` — `serverAPI.billing.downloadTripStatus()`
+**File:** `lib/api/server.ts` — `serverAPI.billing.fetchSlaStatus()`
 
-POSTs to the backend's trip-status export (`app.config.ts` →
-`Endpoints.BILL.GET_TRIP_STATUS`) and streams back the `.xls` as a Buffer.
-`TripStatusRequest` omits `status`/`action_date_type` from the JSON body when
-they are `undefined` — the backend then runs unfiltered. The request has a
-5-minute timeout because exports can be slow.
+POSTs to the backend's sla-status report (`app.config.ts` →
+`Endpoints.BILL.GET_SLA_STATUS`) and returns the JSON payload
+(`{ data: TripStatusRow[], message, status }`). The request body is unchanged
+from the retired trip-status export: `TripStatusRequest` omits
+`status`/`action_date_type` from the JSON body when they are `undefined` —
+the backend then runs unfiltered. One response carries all matching rows. The
+request has a 5-minute timeout because exports can be slow. A non-200
+`status` inside the envelope (the backend reports failures inside a 200
+HTTP response) becomes a `502` carrying the backend's `message`.
 
 ## Step 3 — The run archive opens
 
@@ -67,30 +71,32 @@ they are `undefined` — the backend then runs unfiltered. The request has a
 
 Every calculation gets a folder `.data/billing/<runId>/` (gitignored):
 
-| File                | Written at   | Content                     |
-| ------------------- | ------------ | --------------------------- |
-| `source.xls`        | Step 3       | the raw backend download    |
-| `request.json`      | Step 3       | the submitted payload       |
-| `summary.json`      | Step 7       | result + how the run decided|
-| `billing_report.xlsx` | Step 7     | the generated report        |
+| File                | Written at   | Content                       |
+| ------------------- | ------------ | ----------------------------- |
+| `source.json`       | Step 3       | the raw backend response      |
+| `request.json`      | Step 3       | the submitted payload         |
+| `summary.json`      | Step 7       | result + how the run decided  |
+| `billing_report.xlsx` | Step 7     | the generated report          |
 
 `runId` is also returned to the caller as the `X-Run-Id` response header —
 quote it when auditing a report.
 
-## Step 4 — Parse the workbook into rows
+## Step 4 — Parse the response into rows
 
-**File:** `lib/billing/parse.ts` — `parseTripStatusFile()`
+**File:** `lib/billing/parse.ts` — `parseSlaStatusResponse()`
 
-SheetJS sniffs the real format from the bytes (BIFF `.xls`, `.xlsx`, or an
-HTML/CSV table with an `.xls` name all work). It:
+It:
 
-- converts the first sheet into `TripStatusRow[]` (`lib/billing/types.ts`
-  mirrors the export's header names),
-- verifies `REQUIRED_COLUMNS` are present — otherwise throws, which the route
-  turns into `422` with the `runId` + `sourceFile` path,
-- fails with `422` when the file has **zero rows** (wrong filters, not a bill),
-- detects each date column's Excel number format so the output file can
-  display dates exactly like the source (`dateFormats`).
+- verifies the payload carries a `data` array — otherwise throws, which the
+  route turns into `422` with the `runId` + `sourceFile` path,
+- verifies `REQUIRED_COLUMNS` on the raw rows — a backend field rename fails
+  loudly instead of billing on blanks,
+- normalizes each row into `TripStatusRow[]` (`lib/billing/types.ts` mirrors
+  the field names): nulls (e.g. `Thana`) become `""` and columns are emitted
+  in `TRIP_STATUS_COLUMNS` order so the report keeps a stable column order,
+- fails with `422` when `data` has **zero rows** (wrong filters, not a bill),
+- leaves `dateFormats` empty — dates arrive as Excel serial numbers and the
+  report applies its `DEFAULT_DATE_FORMAT`.
 
 ## Step 5 — Which org's branch rules apply?
 
@@ -182,8 +188,8 @@ The workbook has two sheets, **"Billing Summary" first**:
   `in_out_remote` values), plus `BILLING_COLUMN_HEADERS` from
   `lib/billing/types.ts`: `Rate`, `TAT Days`, `TAT Extra`, `Penalty`,
   `Price After Penalty`, `Compared Branches And Distances` (the per-row audit
-  trail from `classify()`). Date cells reuse the format detected in Step 4; a
-  grand-total row closes the sheet.
+  trail from `classify()`). Date cells use the report's default date format;
+  a grand-total row closes the sheet.
 
 `billingReportFileName()` names the file
 `Billing_Report_<from>_to_<till>.xlsx`.
@@ -210,7 +216,7 @@ open for the duration (reports can take minutes).
 | Outcome                     | Where decided            | Effect on the row            |
 | --------------------------- | ------------------------ | ---------------------------- |
 | `400`                       | `route.ts: validate()`   | request rejected             |
-| `422` unparseable file      | `route.ts` catch         | runId + sourceFile returned  |
+| `422` unusable response     | `route.ts` catch         | runId + sourceFile returned  |
 | `422` zero rows             | `route.ts`               | filters were wrong, no bill  |
 | `ROUTE_DISTANCE_UNAVAILABLE`| `classify()`             | row skipped, never guessed   |
 | `INVALID_COORDINATES`       | `classify()`             | row skipped                  |

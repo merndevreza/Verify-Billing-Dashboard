@@ -20,7 +20,7 @@ const COMMON = {
 }
 
 const BILL = {
-  GET_TRIP_STATUS: BASE_URL + "/api/v2/reports/trip-status", // responds with an .xls download
+  GET_SLA_STATUS: BASE_URL + "/api/v2/reports/sla-status", // responds with JSON { data: [...] }
 }
 
 export { AUTH, COMMON, BILL }

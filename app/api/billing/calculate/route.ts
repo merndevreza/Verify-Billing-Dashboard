@@ -2,14 +2,14 @@
 // bill calculation (NOT a proxy of an existing backend endpoint — existing
 // backend APIs are called client-side, see lib/api/client.ts).
 //
-// Flow: receive the form payload + Authorization header → download the
-// trip-status .xls from the backend → parse the rows → classify In/Out/Remote
-// (with GraphHopper road-distance revalidation) → apply rates, TAT and
-// penalties → generate the billing .xlsx and return it as a download.
+// Flow: receive the form payload + Authorization header → fetch the
+// sla-status report (JSON) from the backend → parse the rows → classify
+// In/Out/Remote (with GraphHopper road-distance revalidation) → apply rates,
+// TAT and penalties → generate the billing .xlsx and return it as a download.
 
 import { apiErrorResponse, serverAPI } from "@/lib/api/server"
 import { processBilling, ROUTER_PROVIDER } from "@/lib/billing/calculate"
-import { parseTripStatusFile } from "@/lib/billing/parse"
+import { parseSlaStatusResponse } from "@/lib/billing/parse"
 import {
   billingReportFileName,
   buildBillingWorkbook,
@@ -89,9 +89,9 @@ export async function POST(request: Request) {
   try {
     const runId = newRunId()
 
-    // 1. Download the .xls from the backend (Authorization header wins over
-    //    the session token; both are the same backend API token).
-    const file = await serverAPI.billing.downloadTripStatus(
+    // 1. Fetch the sla-status report from the backend (Authorization header
+    //    wins over the session token; both are the same backend API token).
+    const sla = await serverAPI.billing.fetchSlaStatus(
       {
         dateFrom: payload.dateFrom,
         dateTill: payload.dateTill,
@@ -103,21 +103,26 @@ export async function POST(request: Request) {
       bearerToken(request)
     )
 
-    // 2. Keep the original download, then the submitted form values.
-    const ext = file.fileName?.match(/\.(xlsx?|csv)$/i)?.[0] ?? ".xls"
-    const sourceFile = await saveRunFile(runId, `source${ext}`, file.buffer)
+    // 2. Keep the raw response, then the submitted form values.
+    const sourceFile = await saveRunFile(
+      runId,
+      "source.json",
+      JSON.stringify(sla, null, 2)
+    )
     await saveRunFile(runId, "request.json", JSON.stringify(payload, null, 2))
 
     // 3. Parse + classify + bill.
     let parsed
     try {
-      parsed = parseTripStatusFile(file.buffer)
+      parsed = parseSlaStatusResponse(sla)
     } catch (err) {
       return Response.json(
         {
           success: false,
           message:
-            err instanceof Error ? err.message : "Could not read the file",
+            err instanceof Error
+              ? err.message
+              : "Could not read the sla-status response",
           runId,
           sourceFile,
         },
@@ -125,7 +130,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // A headers-only export means the filters matched nothing — that is an
+    // An empty data array means the filters matched nothing — that is an
     // input mistake, not a bill. Fail loudly instead of generating a 0-row
     // report.
     if (parsed.rows.length === 0) {
@@ -133,7 +138,7 @@ export async function POST(request: Request) {
         {
           success: false,
           message:
-            "The downloaded trip file contains no rows — check the date range, organization and status filters",
+            "The sla-status report contains no rows — check the date range, organization and status filters",
           runId,
           sourceFile,
         },

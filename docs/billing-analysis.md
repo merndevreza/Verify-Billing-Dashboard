@@ -23,10 +23,10 @@ More billing rules and edge cases to be supplied separately (not yet received).
 ```
 Verify-Billing-Dashboard (this repo)
 │  Bill Generation form → POST /api/billing/calculate (own route handler)
-│     └─ server-side: download trip-status .xls → parse → classify → rate
+│     └─ server-side: fetch sla-status JSON → parse → classify → rate
 │        → generate billing Excel → return as download
 │
-├─ calls backend POST /api/v2/reports/trip-status with the session Bearer
+├─ calls backend POST /api/v2/reports/sla-status with the session Bearer
 │  token (NextAuth JWT → session.accessToken, attached in lib/api/server.ts)
 │
 ├─ graphhopper-bd — Dockerized GraphHopper 11.1 on :8989 (road distances)
@@ -45,10 +45,13 @@ Architecture rules that bind the implementation (from `AGENTS.md`):
   with the session Bearer token; `serverAPI` must never be imported client-side.
 - Billing calculation and report generation logic stay **server-side**.
 
-## 3. The trip-status export (input API)
+## 3. The sla-status report (input API)
 
-`POST {NEXT_PUBLIC_API_BASE_URL}/api/v2/reports/trip-status` — registered as
-`BILL.GET_TRIP_STATUS` in `app.config.ts`. Responds with a file download.
+`POST {NEXT_PUBLIC_API_BASE_URL}/api/v2/reports/sla-status` — registered as
+`BILL.GET_SLA_STATUS` in `app.config.ts`. Responds with JSON:
+`{ data: TripStatusRow[] }`. Replaced the retired trip-status `.xls` export
+in November 2026; same request body, same Bearer auth, one response carries
+all matching rows.
 
 Request body (JSON):
 
@@ -68,11 +71,13 @@ Notes:
   `.env` currently points at **staging** `https://api.verify.barikoimaps.dev`.
 - The Bearer token is the backend API token stored in the NextAuth JWT
   (`auth.config.ts` credentials login → `token.accessToken`).
-- Existing wrapper: `serverAPI.billing.downloadTripStatus()` in
-  `lib/api/server.ts` (POST, 5-minute timeout, returns
-  `{ buffer, contentType, fileName }`).
+- Existing wrapper: `serverAPI.billing.fetchSlaStatus()` in
+  `lib/api/server.ts` (POST, 5-minute timeout, returns the parsed JSON).
+- Row normalizer: `parseSlaStatusResponse()` in `lib/billing/parse.ts` —
+  nulls → `""`, stable `TRIP_STATUS_COLUMNS` order, `REQUIRED_COLUMNS`
+  checked against the raw rows.
 
-## 4. The downloaded Excel report (input data)
+## 4. The report data (formerly a downloaded Excel file)
 
 - Confirmed a **true BIFF8 .xls** (OLE2 Composite Document), not an
   HTML/CSV-in-disguise — SheetJS parses it fine (`xlsx` dep, already declared
@@ -150,11 +155,13 @@ district-based — the branch serving radius (or metro flag) participates.
 `app/api/billing/calculate/route.ts` already implements:
 
 1. Payload validation (ISO dates, non-empty `org_id`/`status`, rates present).
-2. `serverAPI.billing.downloadTripStatus(...)` → `.xls` buffer (5-min timeout).
-3. Persists source file + `request.json` under gitignored
+2. `serverAPI.billing.fetchSlaStatus(...)` → JSON `{ data: [...] }` (5-min
+   timeout).
+3. Persists the raw response (`source.json`) + `request.json` under gitignored
    `.data/billing/<runId>/` (`lib/billing/storage.ts`).
-4. `parseTripStatusFile()` (`lib/billing/parse.ts`) — SheetJS read, first
-   sheet, `defval: ""`, required-column check.
+4. `parseSlaStatusResponse()` (`lib/billing/parse.ts`) — `data` array check,
+   required-column check on the raw rows, null→`""` normalization, stable
+   column order.
 5. `applyRates()` (`lib/billing/calculate.ts`) — flat rate per normalized
    zone, builds `BillSummary`.
 6. Responds with JSON: `{ success, runId, sourceFile, resultFile, summary,

@@ -30,7 +30,7 @@ export async function getSessionToken(): Promise<string | undefined> {
 // Backend input data for the billing calculations
 // ============================================================================
 
-/** Body accepted by the backend trip-status export. */
+/** Body accepted by the backend sla-status report. */
 export interface TripStatusRequest {
   dateFrom: string
   dateTill: string
@@ -41,20 +41,21 @@ export interface TripStatusRequest {
   action_date_type?: "START_DATE" | "END_DATE"
 }
 
-/** Result of an upstream endpoint that answers with a file download. */
-export interface BackendFile {
-  buffer: Buffer
-  contentType: string
-  /** File name from Content-Disposition, if the backend sent one. */
-  fileName?: string
+/** Result of the backend sla-status report endpoint. */
+export interface SlaStatusResponse {
+  /** The report rows; validated/normalized downstream (lib/billing/parse.ts). */
+  data?: unknown
+  /** Envelope fields; a non-200 body status is treated as an upstream error. */
+  status?: number
+  message?: string
 }
 
-/** POST to a backend endpoint that streams back a file (e.g. an .xls export). */
-async function backendFetchFile(
+/** POST to a backend endpoint that answers with a JSON payload. */
+async function backendFetchJson(
   url: string,
   body: unknown,
   tokenOverride?: string
-): Promise<BackendFile> {
+): Promise<unknown> {
   const token = tokenOverride ?? (await getSessionToken())
   if (!token) {
     throw new ApiErrorClass({
@@ -75,43 +76,57 @@ async function backendFetchFile(
     signal: AbortSignal.timeout(5 * 60_000), // exports can be slow
   })
 
-  const contentType = response.headers.get("content-type") ?? ""
-
-  // Errors (and 200-with-JSON-message replies) are not a file.
-  if (!response.ok || contentType.includes("application/json")) {
+  if (!response.ok) {
     let message = defaultApiErrorMessage(response.status)
     try {
-      const raw = contentType.includes("application/json")
-        ? await response.json()
-        : await response.text()
-      message = extractUserReadableApiErrorMessage(raw) ?? message
+      message =
+        extractUserReadableApiErrorMessage(await response.json()) ?? message
     } catch {
       // keep default
     }
     throw new ApiErrorClass({
-      status: response.ok ? 502 : response.status,
+      status: response.status,
       message,
-      code:
-        response.status >= 500 || response.ok ? "SERVER_ERROR" : "CLIENT_ERROR",
+      code: response.status >= 500 ? "SERVER_ERROR" : "CLIENT_ERROR",
     })
   }
 
-  const disposition = response.headers.get("content-disposition") ?? ""
-  const fileName = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(
-    disposition
-  )?.[1]
-
-  return {
-    buffer: Buffer.from(await response.arrayBuffer()),
-    contentType,
-    fileName: fileName ? decodeURIComponent(fileName) : undefined,
+  try {
+    return await response.json()
+  } catch {
+    throw new ApiErrorClass({
+      status: 502,
+      message: "The backend returned a non-JSON response",
+      code: "SERVER_ERROR",
+    })
   }
 }
 
 export const billing = {
-  /** Trip-status export: the backend answers with an .xls file. */
-  downloadTripStatus: async (body: TripStatusRequest, token?: string) => {
-    return backendFetchFile(Endpoints.BILL.GET_TRIP_STATUS, body, token)
+  /** SLA-status report: the backend answers with JSON { data, message, status }. */
+  fetchSlaStatus: async (body: TripStatusRequest, token?: string) => {
+    const json = (await backendFetchJson(
+      Endpoints.BILL.GET_SLA_STATUS,
+      body,
+      token
+    )) as SlaStatusResponse
+
+    // This backend reports failures inside a 200 response via its
+    // { status, message } envelope — surface them as upstream errors instead
+    // of letting them reach the row parser.
+    if (json.status !== undefined && json.status !== 200) {
+      const message =
+        typeof json.message === "string" && json.message.trim().length > 0
+          ? json.message
+          : defaultApiErrorMessage(502)
+      throw new ApiErrorClass({
+        status: 502,
+        message,
+        code: "SERVER_ERROR",
+      })
+    }
+
+    return json
   },
 }
 
