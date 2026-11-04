@@ -65,10 +65,7 @@ function toCoord(value: unknown): number {
 /** The "Attention Needed" cell: joined hybrid-estimate notes, or null. */
 function attentionFrom(estimateNotes: string[]): string | null {
   if (estimateNotes.length === 0) return null
-  return (
-    `MANUAL CHECK — distance estimated for ${estimateNotes.length} branch(es) ` +
-    `(trip end off the mapped road graph): ${estimateNotes.join("; ")}`
-  )
+  return `Estimated distance — ${estimateNotes.join("; ")}`
 }
 
 export async function processBilling(
@@ -221,7 +218,7 @@ export async function processBilling(
         const km = result.meters / 1000
         if (result.estimated) {
           estimateNotes.push(
-            `${branch.branch_name} (${km.toFixed(2)} km): ${result.note}`
+            `${branch.branch_name}: ${km.toFixed(2)} km (${result.note})`
           )
         }
         if (km <= branch.max_distance_km) {

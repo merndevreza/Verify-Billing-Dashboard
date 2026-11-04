@@ -162,10 +162,7 @@ async function hybridEstimate(
           best = {
             meters,
             estimated: true,
-            note:
-              `${label} is ~${(gap / 1000).toFixed(2)} km off the mapped road graph; ` +
-              `distance estimated as motorcycle route from the best reachable ` +
-              `road point (${snapped[0].toFixed(5)}, ${snapped[1].toFixed(5)}) + air distance × 1.2`,
+            note: `${label} ~${(gap / 1000).toFixed(2)} km off mapped road`,
           }
         }
       } catch {
