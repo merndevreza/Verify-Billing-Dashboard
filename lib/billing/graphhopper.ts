@@ -129,18 +129,22 @@ function offsetPoint(
 }
 
 /**
- * Hybrid fallback for a failed route: ring-search around `moving` for the
- * nearest point that still routes to `fixed`, then return that road distance
- * plus the air-gap back to the real endpoint inflated by GAP_DETOUR_FACTOR.
- * `side` is which endpoint (0 = start, 1 = end) is being re-anchored.
- * Returns null when nothing within PROBE_OFFSETS_M routes — the pair is
- * genuinely unreachable and the caller should keep failing the row.
+ * Hybrid fallback for a failed route: ring-search around `moving` for a point
+ * that still routes to `fixed`, and return the shortest (route + air-gap ×
+ * GAP_DETOUR_FACTOR) across every successful probe. Taking the minimum
+ * matters: broken map data can make the first routable probe sit on the
+ * wrong side of the gap and massively overstate the distance (measured up to
+ * ×5 detour vs ×1.1 for the best anchor). `side` is which endpoint
+ * (0 = start, 1 = end) is being re-anchored. Returns null when nothing
+ * within PROBE_OFFSETS_M routes — the pair is genuinely unreachable and the
+ * caller should keep failing the row.
  */
 async function hybridEstimate(
   moving: [number, number],
   fixed: [number, number],
   side: 0 | 1
 ): Promise<HybridResult | null> {
+  let best: HybridResult | null = null
   for (const offset of PROBE_OFFSETS_M) {
     for (let b = 0; b < PROBE_BEARINGS; b++) {
       const bearing = (2 * Math.PI * b) / PROBE_BEARINGS
@@ -152,21 +156,24 @@ async function hybridEstimate(
         const snapped = side === 0 ? answer.snappedStart : answer.snappedEnd
         if (!snapped) continue
         const gap = haversineM(moving[0], moving[1], snapped[0], snapped[1])
-        const label = side === 0 ? "trip end" : "branch"
-        return {
-          meters: answer.distance + gap * GAP_DETOUR_FACTOR,
-          estimated: true,
-          note:
-            `${label} is ~${(gap / 1000).toFixed(2)} km off the mapped road graph; ` +
-            `distance estimated as motorcycle route from the nearest drivable ` +
-            `point (${snapped[0].toFixed(5)}, ${snapped[1].toFixed(5)}) + air distance × 1.2`,
+        const meters = answer.distance + gap * GAP_DETOUR_FACTOR
+        if (best === null || meters < best.meters) {
+          const label = side === 0 ? "trip end" : "branch"
+          best = {
+            meters,
+            estimated: true,
+            note:
+              `${label} is ~${(gap / 1000).toFixed(2)} km off the mapped road graph; ` +
+              `distance estimated as motorcycle route from the best reachable ` +
+              `road point (${snapped[0].toFixed(5)}, ${snapped[1].toFixed(5)}) + air distance × 1.2`,
+          }
         }
       } catch {
         // candidate sits off-network or is unreachable — try the next bearing
       }
     }
   }
-  return null
+  return best
 }
 
 /** Which endpoint failed to snap, from GraphHopper's "Cannot find point N". */
