@@ -277,11 +277,7 @@ export default function BillGenerationClient() {
                         </div>
                       )}
                       {orgs.map((org: any) => (
-                        <SelectItem
-                          key={org.uuid}
-                          value={org.uuid}
-                          disabled={org.uuid !== ENABLED_ORG_UUID}
-                        >
+                        <SelectItem key={org.uuid} value={org.uuid}>
                           {org.name}
                         </SelectItem>
                       ))}

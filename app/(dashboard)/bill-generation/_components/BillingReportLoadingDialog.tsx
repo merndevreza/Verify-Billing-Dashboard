@@ -13,18 +13,21 @@ import { Progress } from "@/components/ui/progress"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
-// 1 min base estimate; if the run isn't done by then the estimate is
-// extended by 30 s so the countdown never sits at 00:00 mid-run.
-const BASE_ESTIMATE_SECONDS = 60
+// Estimate ≈ 15 s of processing per selected billing day; if the run isn't
+// done by then the estimate is extended by 30 s so the countdown never sits
+// at 00:00 mid-run.
+const SECONDS_PER_DAY = 15
 const EXTENSION_SECONDS = 30
 // Bar never reaches 100% while running — only the done phase fills it.
 const MAX_DISPLAYED_PROGRESS = 95
 
+// Milestones as fractions of the estimate, so the labels track the run for
+// both a 1-day (15 s) and a month-long (~8 min) report.
 const STEPS = [
-  { at: 0, label: "Downloading trips…" },
-  { at: 20, label: "Classifying In / Out / Remote…" },
-  { at: 60, label: "Calculating bills…" },
-  { at: 100, label: "Finalizing report…" },
+  { frac: 0, label: "Downloading trips…" },
+  { frac: 0.25, label: "Classifying In / Out / Remote…" },
+  { frac: 0.6, label: "Calculating bills…" },
+  { frac: 0.9, label: "Finalizing report…" },
 ]
 
 function useElapsed(open: boolean, frozen: boolean) {
@@ -45,17 +48,27 @@ function useElapsed(open: boolean, frozen: boolean) {
   return elapsed
 }
 
-function useEstimate(open: boolean, elapsed: number, frozen: boolean) {
-  const [estimate, setEstimate] = React.useState(BASE_ESTIMATE_SECONDS)
+function useEstimate(
+  open: boolean,
+  elapsed: number,
+  frozen: boolean,
+  base: number,
+) {
+  const [estimate, setEstimate] = React.useState(base)
+  // The estimate the run started with — overtime is measured against it,
+  // not against the extended value.
+  const [initialEstimate, setInitialEstimate] = React.useState(base)
+  // Re-base on every open/close and whenever the day count changes.
   React.useEffect(() => {
-    if (!open) setEstimate(BASE_ESTIMATE_SECONDS)
-  }, [open])
+    setEstimate(base)
+    setInitialEstimate(base)
+  }, [open, base])
   React.useEffect(() => {
     if (open && !frozen && elapsed >= estimate) {
       setEstimate((e) => e + EXTENSION_SECONDS)
     }
   }, [open, frozen, elapsed, estimate])
-  return estimate
+  return { estimate, initialEstimate }
 }
 
 const pad = (n: number) => n.toString().padStart(2, "0")
@@ -83,20 +96,25 @@ function DigitBlock({ value, label }: { value: string; label: string }) {
 export function BillingReportLoadingDialog({
   open,
   phase = "running",
+  days = 1,
 }: {
   open: boolean
   phase?: "running" | "done"
+  /** Selected billing days — the time estimate is ~15 s per day. */
+  days?: number
 }) {
   const done = phase === "done"
   const elapsed = useElapsed(open, done)
-  const estimate = useEstimate(open, elapsed, done)
+  const base = Math.max(days, 1) * SECONDS_PER_DAY
+  const { estimate, initialEstimate } = useEstimate(open, elapsed, done, base)
 
   const remaining = done ? 0 : Math.max(estimate - elapsed, 0)
-  const overtime = elapsed >= BASE_ESTIMATE_SECONDS
+  const overtime = elapsed > initialEstimate
   const progress = done
     ? 100
     : Math.min((elapsed / estimate) * 100, MAX_DISPLAYED_PROGRESS)
-  const step = [...STEPS].reverse().find((s) => elapsed >= s.at) ?? STEPS[0]
+  const step =
+    [...STEPS].reverse().find((s) => elapsed >= s.frac * estimate) ?? STEPS[0]
 
   // Ring geometry
   const r = 52
@@ -152,6 +170,11 @@ export function BillingReportLoadingDialog({
             <DigitBlock value={pad(remaining % 60)} label="sec" />
           </div>
 
+          <p className="-mt-2 text-[10px] text-muted-foreground">
+            {days} selected {days === 1 ? "day" : "days"} · ~{SECONDS_PER_DAY} s
+            per day
+          </p>
+
           <div className="grid gap-1.5 text-center">
             <DialogTitle className="text-base">
               Generating billing report
@@ -191,7 +214,7 @@ export function BillingReportLoadingDialog({
                 key={s.label}
                 className={cn(
                   "size-1.5 rounded-full transition-colors",
-                  elapsed >= s.at || done
+                  elapsed >= s.frac * estimate || done
                     ? "bg-primary"
                     : "bg-muted-foreground/30",
                 )}

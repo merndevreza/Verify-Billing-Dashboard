@@ -36,6 +36,13 @@ export function formatShortDate(iso: string): string {
   })
 }
 
+/** "2026-02-14" → "Sat" (weekday prefix for chip labels). */
+export function formatShortWeekday(iso: string): string {
+  return parseISODate(iso).toLocaleDateString("en-GB", {
+    weekday: "short",
+  })
+}
+
 /** Date → "12 Feb 2026" (range button label). */
 export function formatFullDate(date: Date): string {
   return date.toLocaleDateString("en-GB", {
