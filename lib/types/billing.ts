@@ -1,7 +1,7 @@
 import type { DateRange } from "react-day-picker"
 
 /** How trips are grouped on the bill. */
-export type BillingType = "trip" | "location"
+export type BillingType = "trip" | "file"
 
 /** Form values collected by the /bill-generation form (React Hook Form). */
 export type ActionDateType = "START_DATE" | "END_DATE"

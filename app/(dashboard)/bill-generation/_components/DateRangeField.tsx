@@ -1,5 +1,6 @@
 "use client"
 
+import { Fragment } from "react"
 import {
   addDays,
   endOfMonth,
@@ -19,6 +20,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { formatFullDate, toISODate } from "@/lib/utils/date"
+import { Separator } from "@/components/ui/separator"
 
 const MAX_RANGE_DAYS = 31
 
@@ -110,15 +112,18 @@ export default function DateRangeField({
             <p className="px-2 py-1 text-[0.8rem] font-medium text-muted-foreground">
               Presets
             </p>
-            {presets.map((preset) => (
-              <Button
-                key={preset.label}
-                variant={preset === activePreset ? "secondary" : "ghost"}
-                className="h-7 w-full justify-start px-2 text-xs font-normal"
-                onClick={() => onChange(preset.range)}
-              >
-                {preset.label}
-              </Button>
+            {presets.map((preset, i) => (
+              <Fragment key={preset.label}>
+                {/* Group presets: days | weeks | months */}
+                {(i === 2 || i === 4) && <Separator className="mx-2 my-1" />}
+                <Button
+                  variant={preset === activePreset ? "secondary" : "ghost"}
+                  className="h-7 w-full justify-start px-2 text-xs font-normal"
+                  onClick={() => onChange(preset.range)}
+                >
+                  {preset.label}
+                </Button>
+              </Fragment>
             ))}
           </div>
           <div>

@@ -51,21 +51,21 @@ const WEEKDAYS = [
 ]
 
 // reports table, application header, and filter dropdowns.
+// Keys are display order; `value` is the backend application-status ID
+// forwarded to the sla-status filter, so it must stay 6/7/8.
 const APPLICATION_STATUS_MAP: Record<number, { label: string; value: number }> = {
-  1: { label: 'Created', value: 1 },
-  2: { label: 'On Going', value: 2 },
-  3: { label: 'Hold', value: 3 },
-  4: { label: 'Finished', value: 4 },
-  5: { label: 'Canceled', value: 5 },
-  6: { label: 'Submitted', value: 6 },
-  7: { label: 'Partially Submitted', value: 7 },
-  8: { label: 'Withdrawn', value: 8 },
+  1: { label: 'Submitted', value: 6 },
+  2: { label: 'Partially Submitted', value: 7 },
+  3: { label: 'Withdrawn', value: 8 },
 };
+// Only this organization is billable for now; the rest render disabled.
+const ENABLED_ORG_UUID = "79e1788b-4b40-48d3-ab51-25171779703d" // Brac Bank PLC
+
 const DEFAULT_VALUES: BillFormValues = {
   dateRange: { from: undefined, to: undefined },
-  organizationId: "",
-  statuses: [],
-  action_date_type: "",
+  organizationId: ENABLED_ORG_UUID,
+  statuses: [6,8],
+  action_date_type: "END_DATE",
   billingType: "trip",
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
@@ -277,7 +277,11 @@ export default function BillGenerationClient() {
                         </div>
                       )}
                       {orgs.map((org: any) => (
-                        <SelectItem key={org.uuid} value={org.uuid}>
+                        <SelectItem
+                          key={org.uuid}
+                          value={org.uuid}
+                          disabled={org.uuid !== ENABLED_ORG_UUID}
+                        >
                           {org.name}
                         </SelectItem>
                       ))}
@@ -309,7 +313,7 @@ export default function BillGenerationClient() {
                           val.length === 0
                             ? "All statuses"
                             : val.length === 1
-                              ? APPLICATION_STATUS_MAP[val[0]]?.label
+                              ? Object.values(APPLICATION_STATUS_MAP).find((opt) => opt.value === val[0])?.label
                               : `${val.length} selected`
                         }
                       </SelectValue>
@@ -357,14 +361,14 @@ export default function BillGenerationClient() {
                   <Select
                     value={field.value}
                     onValueChange={field.onChange}
-                    items={[{ value: "trip", label: "Trip wise" }, { value: "location", label: "Location wise" }]}
+                    items={[{ value: "trip", label: "Trip wise" }, { value: "file", label: "File wise" }]}
                   >
                     <SelectTrigger className="w-full" id="billingType">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="trip">Trip wise</SelectItem>
-                      <SelectItem value="location">Location wise</SelectItem>
+                      <SelectItem value="file" disabled>File wise</SelectItem>
                     </SelectContent>
                   </Select>
                 )}
