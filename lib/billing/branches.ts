@@ -1,6 +1,6 @@
-// Branch domain logic for the Out/Remote classification: the Branch shape,
-// district matching and address heuristics. Which ORG owns which branch
-// dataset is decided in org-branches.ts, not here.
+// Branch domain logic for the Out/Remote classification: the Branch shape
+// and district matching. Which ORG owns which branch dataset is decided in
+// org-branches.ts, not here.
 
 export interface Branch {
   id: number
@@ -81,19 +81,4 @@ export function branchesForDistrict(
  */
 export function isDhakaDistrict(tripDistrict: unknown): boolean {
   return canonicalDistrict(tripDistrict) === "dhaka"
-}
-
-/**
- * Step A — District Sadar check: does the address contain the district name
- * followed by the word "Sadar"? Normalization makes "Rajshahi Sadar-Kazla"
- * and "COX'S BAZAR SADAR" both match their district spellings.
- */
-export function isDistrictSadarAddress(
-  tripDistrict: unknown,
-  address: unknown
-): boolean {
-  const district = normalizeName(tripDistrict)
-  if (!district) return false
-  const addr = normalizeName(address)
-  return addr.includes(district + "sadar")
 }

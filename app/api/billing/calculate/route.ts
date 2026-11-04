@@ -3,9 +3,11 @@
 // backend APIs are called client-side, see lib/api/client.ts).
 //
 // Flow: receive the form payload + Authorization header → fetch the
-// sla-status report (JSON) from the backend → parse the rows → classify
-// In/Out/Remote (with GraphHopper road-distance revalidation) → apply rates,
-// TAT and penalties → generate the billing .xlsx and return it as a download.
+// sla-status report (JSON) from the backend → parse the rows → validate IN
+// against the Dhaka city corporation boundary (data/dhaka.geojson) and
+// classify Out/Remote (with GraphHopper road-distance revalidation) → apply
+// rates, TAT and penalties → generate the billing .xlsx and return it as a
+// download.
 
 import { apiErrorResponse, serverAPI } from "@/lib/api/server"
 import { processBilling, ROUTER_PROVIDER } from "@/lib/billing/calculate"
@@ -159,11 +161,17 @@ export async function POST(request: Request) {
     })
 
     // 4. Generate the Excel report, archive it + the summary, return it.
-    const output = buildBillingWorkbook(rows, baseHeaders, parsed.dateFormats, summary, {
-      dateFrom: payload.dateFrom,
-      dateTill: payload.dateTill,
-      orgName: orgBranches?.orgName ?? null,
-    })
+    const output = await buildBillingWorkbook(
+      rows,
+      baseHeaders,
+      parsed.dateFormats,
+      summary,
+      {
+        dateFrom: payload.dateFrom,
+        dateTill: payload.dateTill,
+        orgName: orgBranches?.orgName ?? null,
+      }
+    )
     await saveRunFile(runId, "billing_report.xlsx", output)
     await saveRunFile(
       runId,
@@ -173,6 +181,8 @@ export async function POST(request: Request) {
           request: payload,
           // Which org's branch rules were applied (null = backend verdicts kept).
           branchDatasetOrg: orgBranches?.orgName ?? null,
+          // IN validation source: coordinates inside this boundary are IN.
+          dhakaBoundary: "data/dhaka.geojson",
           routingProvider: ROUTER_PROVIDER,
           summary,
         },

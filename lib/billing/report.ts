@@ -1,10 +1,12 @@
 import * as XLSX from "xlsx"
+import ExcelJS from "exceljs"
 import type { ParsedTripFile } from "./parse"
 import {
   BILLING_COLUMN_HEADERS,
   type BillSummary,
   type BillingRow,
 } from "./types"
+import { ROUTE_UNAVAILABLE_MARKER } from "./calculate"
 
 /**
  * Fallback date display for when the source file carries no per-cell format
@@ -17,6 +19,11 @@ import {
 const DEFAULT_DATE_FORMAT = "dd-mm-yyyy hh:mm"
 /** Custom numFmtId (≥164 = Excel's free custom range) for DEFAULT_DATE_FORMAT. */
 const DEFAULT_DATE_NUMFMT_ID = 164
+
+/** The "Attention Needed" column whose non-empty rows get the yellow fill. */
+const ATTENTION_COLUMN = "Attention Needed"
+/** Classic yellow for manual-check rows (ARGB). */
+const ATTENTION_FILL_COLOR = "FFFFFF00"
 
 /** Mirror of the penalty rule in calculate.ts: 10% per extra TAT day, capped at 100%. */
 const MAX_PENALTY_DAYS = 10
@@ -74,6 +81,31 @@ function penaltyBreakdown(rows: BillingRow[]): PenaltyBucket[] {
     bucket.penaltyAmount = round2(bucket.penaltyAmount)
   }
   return buckets
+}
+
+const ROUTE_FAILURE_HEADERS = [
+  "DepositId",
+  "RefId",
+  "District",
+  "Thana",
+  "Address",
+  "Latitude",
+  "Longitude",
+  "Compared Branches And Distances",
+] as const
+
+function buildRouteFailuresSheet(rows: BillingRow[]): XLSX.WorkSheet | null {
+  const failed = rows.filter((r) => r.in_out_remote === ROUTE_UNAVAILABLE_MARKER)
+  if (failed.length === 0) return null
+  const data = failed.map((r) =>
+    Object.fromEntries(ROUTE_FAILURE_HEADERS.map((h) => [h, r[h as keyof BillingRow] ?? ""]))
+  )
+  const ws = XLSX.utils.json_to_sheet(data, { header: [...ROUTE_FAILURE_HEADERS] })
+  ws["!cols"] = [
+    { wch: 14 }, { wch: 30 }, { wch: 14 }, { wch: 14 },
+    { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 70 },
+  ]
+  return ws
 }
 
 /**
@@ -139,22 +171,68 @@ const DATE_COLUMNS = [
 ] as const
 
 /**
+ * SheetJS community edition cannot write cell styles, so the yellow
+ * manual-check highlighting is applied in a second pass: ExcelJS re-reads the
+ * SheetJS-built workbook and solid-fills every "Billing Report" row whose
+ * "Attention Needed" cell is non-empty. Values and date formats survive the
+ * round trip.
+ */
+async function highlightAttentionRows(buffer: Buffer): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook()
+  await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer)
+  const ws = workbook.getWorksheet("Billing Report")
+  if (!ws) return buffer
+
+  // Locate the attention column in the header row.
+  let attentionCol = 0
+  ws.getRow(1).eachCell((cell, colNumber) => {
+    if (String(cell.value ?? "").trim() === ATTENTION_COLUMN) {
+      attentionCol = colNumber
+    }
+  })
+  if (!attentionCol) return buffer
+
+  for (let r = 2; r <= ws.rowCount; r++) {
+    const row = ws.getRow(r)
+    const flag = row.getCell(attentionCol)
+    if (typeof flag.value === "string" && flag.value.trim() !== "") {
+      row.eachCell({ includeEmpty: true }, (cell) => {
+        // Replace the whole style object rather than assigning cell.fill —
+        // loaded cells can share one style record, and mutating .fill would
+        // leak the highlight onto unflagged rows (verified: date-formatted
+        // cells share numFmt styles across rows).
+        cell.style = {
+          ...cell.style,
+          fill: {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: ATTENTION_FILL_COLOR },
+          },
+        }
+      })
+    }
+  }
+  return Buffer.from((await workbook.xlsx.writeBuffer()) as ArrayBuffer)
+}
+
+/**
  * Build the generated billing report: the original columns with the three
  * date columns side by side immediately before in_out_remote (and
- * api_submission_time dropped), plus the billing columns, and a "Billing
- * Summary" sheet in front. Numeric billing values are written as numbers;
- * empty ones are skipped so the cells stay blank. The three date columns get
- * the same number format (the one detected in the source file, or the
- * export's default) so they render identically. A grand-total row is
- * appended under the data.
+ * api_submission_time dropped), plus the billing columns (ending in
+ * "Attention Needed"), and a "Billing Summary" sheet in front. Numeric
+ * billing values are written as numbers; empty ones are skipped so the cells
+ * stay blank. The three date columns get the same number format (the one
+ * detected in the source file, or the export's default) so they render
+ * identically. A grand-total row is appended under the data. Rows flagged in
+ * "Attention Needed" (hybrid-estimated distances) are highlighted yellow.
  */
-export function buildBillingWorkbook(
+export async function buildBillingWorkbook(
   rows: BillingRow[],
   baseHeaders: string[],
   dateFormats: ParsedTripFile["dateFormats"],
   summary: BillSummary,
   meta: BillingReportMeta
-): Buffer {
+): Promise<Buffer> {
   const header: string[] = []
   let datesPlaced = false
   for (const name of baseHeaders) {
@@ -207,6 +285,7 @@ export function buildBillingWorkbook(
       return { wch: 16 }
     }
     if (name === "Compared Branches And Distances") return { wch: 60 }
+    if (name === ATTENTION_COLUMN) return { wch: 90 }
     if (BILLING_COLUMN_HEADERS.includes(name as (typeof BILLING_COLUMN_HEADERS)[number])) {
       return { wch: 10 }
     }
@@ -225,7 +304,13 @@ export function buildBillingWorkbook(
     "Billing Summary"
   )
   XLSX.utils.book_append_sheet(wb, ws, "Billing Report")
-  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer
+  const routeFailuresSheet = buildRouteFailuresSheet(rows)
+  if (routeFailuresSheet) {
+    XLSX.utils.book_append_sheet(wb, routeFailuresSheet, "Route Failures")
+  }
+  const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer
+  // Yellow-fill the manual-check rows — SheetJS alone cannot write styles.
+  return highlightAttentionRows(buffer)
 }
 
 export function billingReportFileName(dateFrom: string, dateTill: string): string {

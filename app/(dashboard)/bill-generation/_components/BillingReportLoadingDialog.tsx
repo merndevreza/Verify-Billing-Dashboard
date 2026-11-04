@@ -170,11 +170,6 @@ export function BillingReportLoadingDialog({
             <DigitBlock value={pad(remaining % 60)} label="sec" />
           </div>
 
-          <p className="-mt-2 text-[10px] text-muted-foreground">
-            {days} selected {days === 1 ? "day" : "days"} · ~{SECONDS_PER_DAY} s
-            per day
-          </p>
-
           <div className="grid gap-1.5 text-center">
             <DialogTitle className="text-base">
               Generating billing report

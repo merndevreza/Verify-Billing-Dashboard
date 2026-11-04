@@ -651,6 +651,11 @@ export default function BillGenerationClient() {
       <BillingReportLoadingDialog
         open={isSubmitting}
         phase={isFinishing ? "done" : "running"}
+        days={
+          dateRange?.from && dateRange?.to
+            ? eachDateInRange(dateRange).length
+            : 1
+        }
       />
     </div>
   )

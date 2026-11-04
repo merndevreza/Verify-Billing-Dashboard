@@ -1,16 +1,20 @@
 // Barikoi routing API client — motorcycle road distances for the Out/Remote
 // classification. Drop-in alternative to graphhopper.ts: both files export the
-// same interface (routeDistanceM in meters, haversineM, RouteDistanceError),
-// so calculate.ts can switch providers by swapping one import.
+// same interface (routeDistanceM returning RouteDistanceResult, haversineM,
+// RouteDistanceError), so calculate.ts can switch providers by swapping one
+// import. This provider has no hybrid fallback — it always returns exact
+// distances (estimated: false) or throws.
 //
 // API: POST https://barikoi.xyz/v2/api/routing?key=<API_KEY>&type=vh&profile=motorcycle
 // Docs: https://docs.barikoi.com/api-integrated (route_with_routing_algorithm)
 // Response: Valhalla-style — trip.summary.length is the total distance in km.
 
+import type { RouteDistanceResult } from "./types"
+
 const BASE_URL = "https://barikoi.xyz"
 const PROFILE = "motorcycle"
 const TIMEOUT_MS = 30_000
-const RETRIES = 1
+const RETRIES = 3
 
 /** Provider identity for run archives — graphhopper.ts defines its own. */
 export const ROUTER_PROVIDER = "barikoi"
@@ -59,8 +63,7 @@ async function routeOnce(
         start: { latitude: start[0], longitude: start[1] },
         destination: { latitude: end[0], longitude: end[1] },
       },
-    }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    }), 
     cache: "no-store",
   })
 
@@ -72,17 +75,14 @@ async function routeOnce(
 
   const data = (await response.json()) as {
     trip?: {
+      units?: string
       summary?: { length?: number }
-      legs?: { summary?: { length?: number } }[]
     }
   }
-  // Distance can sit in trip.summary (single-leg) or per-leg summaries; sum
-  // the legs and fall back to trip.summary. Valhalla returns kilometers.
-  const legKm = data.trip?.legs?.reduce(
-    (sum, leg) => sum + (leg.summary?.length ?? 0),
-    0
-  )
-  const km = legKm || data.trip?.summary?.length
+  // The API may return miles or km depending on the request; normalise to km.
+  const rawDist = data.trip?.summary?.length
+  const isMiles = (data.trip?.units ?? "").toLowerCase().startsWith("mi")
+  const km = rawDist != null ? (isMiles ? rawDist * 1.60934 : rawDist) : undefined
   if (typeof km !== "number" || !Number.isFinite(km) || km <= 0) {
     throw new RouteDistanceError("Barikoi routing returned no distance")
   }
@@ -97,11 +97,15 @@ async function routeOnce(
 export async function routeDistanceM(
   start: [number, number],
   end: [number, number]
-): Promise<number> {
+): Promise<RouteDistanceResult> {
   let lastError: unknown
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
-      return await routeOnce(start, end)
+      return {
+        meters: await routeOnce(start, end),
+        estimated: false,
+        note: "",
+      }
     } catch (error) {
       lastError = error
       if (attempt < RETRIES) {
