@@ -18,7 +18,11 @@ export const REQUIRED_COLUMNS = [
   "api_submission_time",
 ] as const
 
-/** Column order preserved into the report (matches the retired xls export). */
+/**
+ * Column order for the parsed rows (matches the retired xls export). The
+ * report reorders the date columns and drops api_submission_time — see
+ * DATE_COLUMNS in report.ts.
+ */
 export const TRIP_STATUS_COLUMNS = [
   "DepositId",
   "RefId",
@@ -47,6 +51,8 @@ export const TRIP_STATUS_COLUMNS = [
   "Thana",
   "in_out_remote",
   "ApplicationStatus",
+  // Kept on the row for the TAT calculation only — never shown in the
+  // report; its data appears as the "Submission Date" column instead.
   "api_submission_time",
 ] as const
 
@@ -57,7 +63,9 @@ export interface ParsedTripFile {
    * sla-status JSON carries no cell formats — leave empty and the report
    * falls back to its DEFAULT_DATE_FORMAT.
    */
-  dateFormats: Partial<Record<"VerificationDateTime" | "Receive Date", string>>
+  dateFormats: Partial<
+    Record<"VerificationDateTime" | "Receive Date" | "Submission Date", string>
+  >
 }
 
 /**

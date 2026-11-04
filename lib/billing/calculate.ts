@@ -15,6 +15,7 @@ import {
   countHolidaysBetween,
   diffCalendarDays,
   parseCalendarDate,
+  parseDateTimeSerial,
 } from "./dates"
 // Routing provider — pick ONE by commenting the other out.
 // 1. graphhopper: self-hosted GraphHopper (graphhopper-bd docker, GRAPHHOPPER_URL)
@@ -253,15 +254,21 @@ export async function processBilling(
           : params.rates.remote
     row["Rate"] = rate
 
+    // Submission Date keeps the backend's date + time (the same Excel serial
+    // form as the other date columns); the TAT count uses the calendar date
+    // only. Set before the TAT checks so it also shows on tatUnavailable rows.
+    const submission = parseDateTimeSerial(row["api_submission_time"])
+    row["Submission Date"] = submission
     const receiveISO = parseCalendarDate(row["Receive Date"])
-    const submissionISO = parseCalendarDate(row["api_submission_time"])
+    const submissionISO = submission === null ? null : parseCalendarDate(submission)
     const verifyISO = parseCalendarDate(row.VerificationDateTime)
     if (!receiveISO || !verifyISO || !submissionISO) return false
-
-    row["Submission Date"] = submissionISO
+    // TAT counts the days SPENT: the Receive day itself is not counted (the
+    // job can arrive at any time of that day), so the count runs from the day
+    // after Receive through the Submission day. Holidays falling between the
+    // two dates are subtracted.
     const tatDays =
-      diffCalendarDays(receiveISO, submissionISO) +
-      1 -
+      diffCalendarDays(receiveISO, submissionISO) -
       countHolidaysBetween(receiveISO, submissionISO, holidays)
     const tatExtra = Math.max(0, tatDays - EXPECTED_DAYS[zone])
     const penalty = Math.min(

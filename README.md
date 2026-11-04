@@ -97,7 +97,7 @@ District spellings are normalized before matching, with aliases for common varia
 | Column | Formula |
 | --- | --- |
 | `Rate` | Zone rate from the form: IN → In-Station rate, OUT → Out-Station rate, REMOTE → Remote rate. Never hardcoded. |
-| `TAT Days` | `(Verification Date − Receive Date) + 1 − holidays strictly between the two dates`. Both endpoints count; a holiday **on** the Receive or Verification date is not subtracted. Calendar-date math (UTC-based, timezone-safe); weekends are not excluded. |
+| `TAT Days` | `Submission Date − Receive Date − holidays strictly between the two dates`. The Receive Date does **not** count (the job can arrive at any time of that day); the Submission Date counts, and a holiday **on** it is not subtracted. Calendar-date math (UTC-based, timezone-safe); weekends are only excluded via the weekly holidays passed from the form. |
 | `TAT Extra` | `MAX(0, TAT Days − SLA)` where SLA = 1 day (IN), 2 days (OUT), 3 days (REMOTE). |
 | `Penalty` | `penalties.dayN` where N = `TAT Extra` (1–7 from the form; beyond 7 extra days, `day7` applies). Not cumulative. |
 | `Price After Penalty` | `Rate − (Rate × Penalty / 100)`, rounded to 2 decimals. |

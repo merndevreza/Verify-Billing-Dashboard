@@ -30,9 +30,12 @@ export interface TripStatusRow {
   api_submission_time: string | number
 }
 
-/** The columns appended to the report, exactly as they must appear. */
+/**
+ * The columns appended after the base columns, exactly as they must appear.
+ * "Submission Date" is not here — the report places it mid-report, side by
+ * side with the other date columns (see DATE_COLUMNS in report.ts).
+ */
 export const BILLING_COLUMN_HEADERS = [
-  "Submission Date",
   "Rate",
   "TAT Days",
   "TAT Extra",
@@ -42,7 +45,8 @@ export const BILLING_COLUMN_HEADERS = [
 ] as const
 
 export interface BillingColumns {
-  "Submission Date": string | null
+  /** Excel serial (date + time), rendered like the other date columns. */
+  "Submission Date": number | null
   "Rate": number | null
   "TAT Days": number | null
   "TAT Extra": number | null

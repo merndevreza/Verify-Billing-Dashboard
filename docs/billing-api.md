@@ -165,8 +165,8 @@ Decides IN / OUT / REMOTE for one row, in this exact order:
 - Rate per zone: `rates.inStation` / `outStation` / `remote`.
 - Dates via `lib/billing/dates.ts`: `parseCalendarDate()` accepts Excel serial
   numbers or display strings; all math is UTC-based so the host timezone
-  never skews `TAT Days` (`diffCalendarDays` + 1, minus
-  `countHolidaysBetween` — endpoints excluded).
+  never skews `TAT Days` (`diffCalendarDays`, minus `countHolidaysBetween`
+  — the Receive day is not counted; holiday endpoints excluded).
 - SLA days: IN 1, OUT 2, REMOTE 3 (`EXPECTED_DAYS`). Extra days pick the
   matching `penalties.day1…day7` percent (beyond 7 → day7), applied as
   `Price After Penalty = rate × (100 − penalty) / 100`.

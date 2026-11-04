@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useForm, Controller } from "react-hook-form"
+import { addDays } from "date-fns"
 import { CalendarIcon, XIcon } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { toast } from "sonner"
@@ -10,7 +11,13 @@ import { useAppDispatch, useAppSelector } from "@/lib/store"
 import { useAuth } from "@/lib/auth/clientAuth"
 import { fetchOrganizations } from "@/lib/store/slices/billingSlice"
 import type { BillFormValues, CalculateBillPayload } from "@/lib/types/billing"
-import { eachDateInRange, toISODate, formatShortDate } from "@/lib/utils/date"
+import {
+  eachDateInRange,
+  toISODate,
+  formatShortDate,
+  formatShortWeekday,
+  formatFullDate,
+} from "@/lib/utils/date"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -61,6 +68,10 @@ const APPLICATION_STATUS_MAP: Record<number, { label: string; value: number }> =
 // Only this organization is billable for now; the rest render disabled.
 const ENABLED_ORG_UUID = "79e1788b-4b40-48d3-ab51-25171779703d" // Brac Bank PLC
 
+// Weekly holidays are auto-detected across the billing period plus this many
+// days before its start (the bill's lookback window).
+const HOLIDAY_LOOKBACK_DAYS = 30
+
 const DEFAULT_VALUES: BillFormValues = {
   dateRange: { from: undefined, to: undefined },
   organizationId: ENABLED_ORG_UUID,
@@ -69,6 +80,8 @@ const DEFAULT_VALUES: BillFormValues = {
   billingType: "trip",
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
+  hasExtraHolidays: false,
+  confirmed: false,
   rates: { inStation: 150, outStation: 200, remote: 685 },
 }
 
@@ -94,6 +107,9 @@ export default function BillGenerationClient() {
     formState: { errors, isSubmitting },
   } = useForm<BillFormValues>({ defaultValues: DEFAULT_VALUES })
   const [isFinishing, setIsFinishing] = useState(false)
+  // Reveals the ✕ remove buttons on auto-detected holiday chips (UI-only;
+  // removing still unchecks that weekday).
+  const [allowHolidayRemoval, setAllowHolidayRemoval] = useState(false)
 
   useEffect(() => {
     if (token && !user?.organizations?.length) dispatch(fetchOrganizations(token))
@@ -102,11 +118,17 @@ export default function BillGenerationClient() {
   const dateRange = watch("dateRange")
   const weeklyHolidays = watch("weeklyHolidays")
   const extraHolidays = watch("extraHolidays")
+  const hasExtraHolidays = watch("hasExtraHolidays")
+  const confirmed = watch("confirmed")
 
-  // Dates in range that fall on weekly holidays
+  // Dates from (period start − 30 days) through period end that fall on
+  // weekly holidays — the bill's lookback window.
   const weeklyHolidayDates = useMemo(() => {
     if (!dateRange?.from || !dateRange?.to) return []
-    return eachDateInRange(dateRange)
+    return eachDateInRange({
+      from: addDays(dateRange.from, -HOLIDAY_LOOKBACK_DAYS),
+      to: dateRange.to,
+    })
       .filter((d) => weeklyHolidays.includes(d.getDay()))
       .map(toISODate)
   }, [dateRange, weeklyHolidays])
@@ -117,6 +139,13 @@ export default function BillGenerationClient() {
       "weeklyHolidays",
       checked ? [...current, day] : current.filter((d) => d !== day)
     )
+  }
+
+  // Opting out also clears any picked extra holidays so stale dates can't
+  // reach the payload.
+  function toggleExtraHolidays(checked: boolean) {
+    setValue("hasExtraHolidays", checked)
+    if (!checked) setValue("extraHolidays", [])
   }
 
   // All selected holiday dates (weekly-derived + extra) for calendar highlighting
@@ -277,7 +306,11 @@ export default function BillGenerationClient() {
                         </div>
                       )}
                       {orgs.map((org: any) => (
-                        <SelectItem key={org.uuid} value={org.uuid}>
+                        <SelectItem
+                          key={org.uuid}
+                          value={org.uuid}
+                          disabled={org.uuid !== ENABLED_ORG_UUID}
+                        >
                           {org.name}
                         </SelectItem>
                       ))}
@@ -379,6 +412,21 @@ export default function BillGenerationClient() {
             <CardTitle>Holidays</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Auto-detection window — highlighted so the holiday scope is explicit */}
+            {dateRange?.from && dateRange?.to && (
+              <div className="rounded-md border border-primary/20 bg-primary/10 px-3 py-2 text-xs">
+                Weekly holidays are auto-detected from{" "}
+                <span className="font-medium">
+                  {formatFullDate(addDays(dateRange.from, -HOLIDAY_LOOKBACK_DAYS))}
+                </span>{" "}
+                to{" "}
+                <span className="font-medium">
+                  {formatFullDate(dateRange.to)}
+                </span>{" "}
+                — the 30 days before the billing period plus the period itself.
+              </div>
+            )}
+
             {/* Weekly holidays */}
             <div className="grid gap-2">
               <Label>Weekly Holidays</Label>
@@ -400,16 +448,19 @@ export default function BillGenerationClient() {
               </div>
             </div>
 
-            {/* Unified holiday date chips — weekly (muted) + extra (amber) */}
-            {(weeklyHolidayDates.length > 0 || extraHolidays.length > 0) && (
+            {/* Detected holiday chips — weekly (muted) + extra (amber) */}
+            {(weeklyHolidayDates.length > 0 ||
+              (hasExtraHolidays && extraHolidays.length > 0)) && (
               <div className="grid gap-1.5">
                 <p className="text-xs text-muted-foreground">
-                  {weeklyHolidayDates.length + extraHolidays.length} holiday
-                  date
-                  {weeklyHolidayDates.length + extraHolidays.length !== 1
-                    ? "s"
-                    : ""}{" "}
-                  in selected range:
+                  {weeklyHolidayDates.length +
+                    (hasExtraHolidays ? extraHolidays.length : 0)}{" "}
+                  holiday date
+                  {weeklyHolidayDates.length +
+                    (hasExtraHolidays ? extraHolidays.length : 0) === 1
+                    ? ""
+                    : "s"}{" "}
+                  detected:
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {weeklyHolidayDates.map((iso) => (
@@ -417,23 +468,26 @@ export default function BillGenerationClient() {
                       key={iso}
                       className="flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-xs"
                     >
-                      {formatShortDate(iso)}
-                      <button
-                        type="button"
-                        onClick={() => removeWeeklyHolidayDate(iso)}
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label={`Remove ${iso}`}
-                      >
-                        <XIcon className="size-3" />
-                      </button>
+                      {formatShortWeekday(iso)}, {formatShortDate(iso)}
+                      {allowHolidayRemoval && (
+                        <button
+                          type="button"
+                          onClick={() => removeWeeklyHolidayDate(iso)}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={`Remove ${iso}`}
+                        >
+                          <XIcon className="size-3" />
+                        </button>
+                      )}
                     </span>
                   ))}
-                  {extraHolidays.map((iso) => (
+                  {hasExtraHolidays &&
+                    extraHolidays.map((iso) => (
                     <span
                       key={iso}
                       className="flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
                     >
-                      {formatShortDate(iso)}
+                      {formatShortWeekday(iso)}, {formatShortDate(iso)}
                       <button
                         type="button"
                         onClick={() => removeExtraHoliday(iso)}
@@ -450,10 +504,20 @@ export default function BillGenerationClient() {
 
             <Separator />
 
-            {/* Extra holidays calendar */}
+            {/* Extra holidays — opt-in via checkbox */}
             <div className="grid gap-2">
-              <Label>Extra Holidays</Label>
-              <Popover>
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+                <Checkbox
+                  checked={Boolean(hasExtraHolidays)}
+                  onCheckedChange={(checked) =>
+                    toggleExtraHolidays(Boolean(checked))
+                  }
+                />
+                Add Extra Holiday
+              </label>
+              {hasExtraHolidays && (
+                <> 
+                  <Popover>
                 <PopoverTrigger
                   render={
                     <Button
@@ -481,6 +545,21 @@ export default function BillGenerationClient() {
                   />
                 </PopoverContent>
               </Popover>
+                </>
+              )}
+
+              {/* 2) Remove detected holidays → show ✕ on the date chips */}
+              <div className="grid gap-2">
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+                  <Checkbox
+                    checked={allowHolidayRemoval}
+                    onCheckedChange={(checked) =>
+                      setAllowHolidayRemoval(Boolean(checked))
+                    }
+                  />
+                  Any holiday that fell on a working day
+                </label> 
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -523,8 +602,38 @@ export default function BillGenerationClient() {
           </CardContent>
         </Card>
 
+        {/* ── Final confirmation ── */}
+        <Controller
+          control={control}
+          name="confirmed"
+          rules={{
+            validate: (v) =>
+              v || "Please review and confirm everything is correct",
+          }}
+          render={({ field }) => (
+            <div className="space-y-1">
+              <label className="flex cursor-pointer items-center gap-2 rounded-md border bg-muted/30 px-3 py-2.5 text-sm">
+                <Checkbox
+                  checked={Boolean(field.value)}
+                  onCheckedChange={(checked) => field.onChange(checked === true)}
+                />
+                I confirm all the details above are correct
+              </label>
+              {errors.confirmed && (
+                <p className="text-xs text-destructive">
+                  {errors.confirmed.message}
+                </p>
+              )}
+            </div>
+          )}
+        />
+
         <div className="flex justify-end">
-          <Button type="submit" size="lg" disabled={isSubmitting}>
+          <Button
+            type="submit"
+            size="lg"
+            disabled={isSubmitting || !confirmed}
+          >
             {isSubmitting ? (
               <>
                 <Spinner className="size-3.5" />

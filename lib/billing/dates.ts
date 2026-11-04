@@ -59,14 +59,68 @@ export function parseCalendarDate(value: unknown): string | null {
   return null
 }
 
+/**
+ * Trip-status date cell → Excel serial with time fraction (e.g. 46327.675).
+ * Numbers pass through; strings parse the export's `mm-dd-yyyy h:mm:ss AM/PM`
+ * display format (ISO `yyyy-mm-dd` with an optional time also accepted).
+ * Returns null when empty/unparseable — callers must treat that as "not
+ * computable" rather than guessing.
+ */
+export function parseDateTimeSerial(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value
+  }
+  if (typeof value !== "string") return null
+  const s = value.trim()
+  if (!s) return null
+
+  // Serial from calendar parts + optional time (rounded to whole seconds so
+  // the float fraction can't render one minute early).
+  const toSerial = (
+    y: number,
+    mo: number,
+    d: number,
+    h = 0,
+    mi = 0,
+    sec = 0
+  ): number =>
+    (Date.UTC(y, mo - 1, d) - EXCEL_EPOCH_UTC_MS) / DAY_MS +
+    Math.round(h * 3600 + mi * 60 + sec) / 86_400
+
+  // ISO: 2026-09-01 (optionally followed by a time part)
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/.exec(
+    s
+  )
+  if (m) {
+    return toSerial(+m[1], +m[2], +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0))
+  }
+
+  // mm-dd-yyyy (or m/d/yyyy), optional time + AM/PM — the export's format
+  m = /^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?\s*(AM|PM)?$/i.exec(
+    s
+  )
+  if (m) {
+    let h = +(m[4] ?? 0)
+    if (m[7]) {
+      const pm = m[7].toUpperCase() === "PM"
+      if (pm && h < 12) h += 12
+      if (!pm && h === 12) h = 0 // 12:xx AM
+    }
+    return toSerial(+m[3], +m[1], +m[2], h, +(m[5] ?? 0), +(m[6] ?? 0))
+  }
+
+  return null
+}
+
 /** Whole calendar days from `fromISO` to `toISO` (to − from). */
 export function diffCalendarDays(fromISO: string, toISO: string): number {
   return Math.round((isoToUTC(toISO) - isoToUTC(fromISO)) / DAY_MS)
 }
 
 /**
- * Holidays strictly between fromISO and toISO (endpoints excluded — a
- * Receive Date or Verification Date falling on a holiday is NOT subtracted).
+ * Holidays strictly between fromISO and toISO (endpoints excluded). The TAT
+ * count runs from the day after the Receive Date through the Submission
+ * Date, so a holiday ON either date itself is not subtracted.
  */
 export function countHolidaysBetween(
   fromISO: string,

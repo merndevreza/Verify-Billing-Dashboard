@@ -7,12 +7,16 @@ import {
 } from "./types"
 
 /**
- * Fallback date display (Excel builtin numFmtId 22) for when the source file
- * carries no per-cell format SheetJS can read. Using a true builtin string
- * matters: custom format strings get written as numFmtIds in Excel's reserved
- * 50–81 range, which Excel renders with East-Asian locale text.
+ * Fallback date display for when the source file carries no per-cell format
+ * SheetJS can read. This is NOT an Excel builtin: left alone, the writer
+ * assigns custom format strings numFmtIds from Excel's reserved 50–81 range,
+ * which Excel replaces with its own locale formats. The string is therefore
+ * seeded into a free custom-range id (≥164) before the workbook is written —
+ * see the registration in buildBillingWorkbook.
  */
-const DEFAULT_DATE_FORMAT = "m/d/yy h:mm"
+const DEFAULT_DATE_FORMAT = "dd-mm-yyyy hh:mm"
+/** Custom numFmtId (≥164 = Excel's free custom range) for DEFAULT_DATE_FORMAT. */
+const DEFAULT_DATE_NUMFMT_ID = 164
 
 /** Mirror of the penalty rule in calculate.ts: 10% per extra TAT day, capped at 100%. */
 const MAX_PENALTY_DAYS = 10
@@ -124,13 +128,25 @@ function buildSummarySheet(
 }
 
 /**
- * Build the generated billing report: original columns in original order with
- * the updated classification values, plus the billing columns, and a
- * "Billing Summary" sheet in front. Numeric billing values are written as
- * numbers; empty ones are skipped so the cells stay blank. Date columns get
- * the number format detected in the source file (or the export's default) so
- * they render as dates, not raw serials. A grand-total row is appended under
- * the data.
+ * The three date columns, side by side in this exact order, placed
+ * immediately before in_out_remote. api_submission_time is dropped from the
+ * report — its data lives on as the Submission Date column.
+ */
+const DATE_COLUMNS = [
+  "Receive Date",
+  "VerificationDateTime",
+  "Submission Date",
+] as const
+
+/**
+ * Build the generated billing report: the original columns with the three
+ * date columns side by side immediately before in_out_remote (and
+ * api_submission_time dropped), plus the billing columns, and a "Billing
+ * Summary" sheet in front. Numeric billing values are written as numbers;
+ * empty ones are skipped so the cells stay blank. The three date columns get
+ * the same number format (the one detected in the source file, or the
+ * export's default) so they render identically. A grand-total row is
+ * appended under the data.
  */
 export function buildBillingWorkbook(
   rows: BillingRow[],
@@ -139,8 +155,24 @@ export function buildBillingWorkbook(
   summary: BillSummary,
   meta: BillingReportMeta
 ): Buffer {
-  const header = [...baseHeaders, ...BILLING_COLUMN_HEADERS]
-  const ws = XLSX.utils.json_to_sheet(rows, { header })
+  const header: string[] = []
+  let datesPlaced = false
+  for (const name of baseHeaders) {
+    // Backend's raw submission column — superseded by "Submission Date".
+    if (name === "api_submission_time") continue
+    if (DATE_COLUMNS.includes(name as (typeof DATE_COLUMNS)[number])) continue
+    if (name === "in_out_remote" && !datesPlaced) {
+      header.push(...DATE_COLUMNS)
+      datesPlaced = true
+    }
+    header.push(name)
+  }
+  if (!datesPlaced) header.push(...DATE_COLUMNS)
+  header.push(...BILLING_COLUMN_HEADERS)
+  // json_to_sheet appends any row key missing from header as a trailing
+  // column, so api_submission_time must be stripped from the rows too.
+  const reportRows = rows.map(({ api_submission_time: _raw, ...rest }) => rest)
+  const ws = XLSX.utils.json_to_sheet(reportRows, { header })
   const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1")
 
   // Grand-total row under the data.
@@ -156,8 +188,9 @@ export function buildBillingWorkbook(
       origin: { r: nextRow, c: totalCol },
     })
   }
-  const dateColumns = ["VerificationDateTime", "Receive Date"] as const
-  for (const column of dateColumns) {
+  // One shared number format for all three date columns so they render
+  // identically and can be compared side by side.
+  for (const column of DATE_COLUMNS) {
     const format = dateFormats[column] ?? DEFAULT_DATE_FORMAT
     const c = header.indexOf(column)
     if (c < 0) continue
@@ -167,16 +200,23 @@ export function buildBillingWorkbook(
     }
   }
 
-  // Widen the appended columns so distances/audit text are readable on open.
+  // Widen the date and appended columns so dates/audit text are readable on
+  // open.
   ws["!cols"] = header.map((name) => {
+    if (DATE_COLUMNS.includes(name as (typeof DATE_COLUMNS)[number])) {
+      return { wch: 16 }
+    }
     if (name === "Compared Branches And Distances") return { wch: 60 }
-    if (name === "Submission Date") return { wch: 14 }
     if (BILLING_COLUMN_HEADERS.includes(name as (typeof BILLING_COLUMN_HEADERS)[number])) {
       return { wch: 10 }
     }
     return {}
   })
 
+  // Register the custom date format in Excel's free custom numFmtId range so
+  // the writer emits a real <numFmt> instead of a reserved builtin id (which
+  // Excel renders with its own locale format — see DEFAULT_DATE_FORMAT).
+  XLSX.SSF._table[DEFAULT_DATE_NUMFMT_ID] = DEFAULT_DATE_FORMAT
   const wb = XLSX.utils.book_new()
   // Summary first — it is the sheet finance opens.
   XLSX.utils.book_append_sheet(

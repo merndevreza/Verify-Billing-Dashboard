@@ -17,6 +17,10 @@ export interface BillFormValues {
   weeklyHolidays: number[]
   /** Extra holidays picked from the calendar, local "yyyy-mm-dd". */
   extraHolidays: string[]
+  /** Whether the period had one-off holidays on regular working days. */
+  hasExtraHolidays: boolean
+  /** Final confirmation gate — the form can't submit without it. */
+  confirmed: boolean
   rates: {
     inStation: number
     outStation: number
