@@ -23,7 +23,7 @@ import {
 
 //import { haversineM, routeDistanceM } from "./graphhopper"
 // export { ROUTER_PROVIDER } from "./graphhopper"
-import { haversineM, routeDistanceM } from "./barikoi-routing"
+import { routeDistanceM } from "./barikoi-routing"
 export { ROUTER_PROVIDER } from "./barikoi-routing"
 
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
@@ -172,45 +172,22 @@ export async function processBilling(
       return { outcome: INVALID_COORDINATES_MARKER, comparison: null }
     }
 
-    // Straight-line prefilter: road distance ≥ straight-line, so a branch
-    // whose own radius is already exceeded by the straight line can never
-    // classify the trip as OUT — skipping its route call is lossless.
-    // Survivors are checked nearest-first: the first branch that fits its own
-    // radius settles the trip as OUT, so ordering by straight line makes the
-    // early exit as fast as possible.
     const comparisons: string[] = []
-    const candidates: { branch: Branch; straightKm: number }[] = []
-    for (const branch of districtBranches) {
-      const straightKm = haversineM(lat, lon, branch.lat, branch.lon) / 1000
-      if (straightKm <= branch.max_distance_km) {
-        candidates.push({ branch, straightKm })
-      } else {
-        comparisons.push(
-          `${branch.branch_name}: straight-line ${straightKm.toFixed(2)} km > ${branch.max_distance_km} km limit, not routed`
-        )
-      }
-    }
-    if (candidates.length === 0) {
-      return { outcome: "REMOTE", comparison: comparisons.join("; ") }
-    }
-    candidates.sort((a, b) => a.straightKm - b.straightKm)
 
     if (routerDown) {
-      for (const { branch } of candidates) {
+      for (const branch of districtBranches) {
         comparisons.push(`${branch.branch_name}: not attempted, router down`)
       }
       return { outcome: ROUTE_UNAVAILABLE_MARKER, comparison: comparisons.join("; ") }
     }
 
-    // Step C/D — motorcycle road distance per candidate. OUT as soon as ANY
-    // candidate fits within its own radius (the remaining ones are not
-    // measured); REMOTE only after EVERY candidate was measured and exceeded
-    // its radius. Any failed/unmeasured candidate → Rule 11.C marker, never
-    // a guessed REMOTE.
+    // Route all eligible branches. OUT as soon as ANY candidate fits within
+    // its own radius; REMOTE only after every candidate was measured and
+    // exceeded its radius. Any failed candidate → Rule 11.C marker.
     let measured = 0
     let anyFailed = false
-    for (let i = 0; i < candidates.length; i++) {
-      const { branch } = candidates[i]
+    for (let i = 0; i < districtBranches.length; i++) {
+      const branch = districtBranches[i]
       try {
         const distance = await routeWithCache([lat, lon], branch)
         routeFailStreak = 0
@@ -218,7 +195,7 @@ export async function processBilling(
         const km = distance / 1000
         if (km <= branch.max_distance_km) {
           const earlyExit =
-            i < candidates.length - 1
+            i < districtBranches.length - 1
               ? ", remaining branches not routed"
               : ""
           comparisons.push(
@@ -236,7 +213,7 @@ export async function processBilling(
         comparisons.push(`${branch.branch_name}: route failed`)
       }
     }
-    return measured === candidates.length && !anyFailed
+    return measured === districtBranches.length && !anyFailed
       ? { outcome: "REMOTE", comparison: comparisons.join("; ") }
       : {
           outcome: ROUTE_UNAVAILABLE_MARKER,
