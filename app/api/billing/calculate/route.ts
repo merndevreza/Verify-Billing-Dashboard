@@ -2,19 +2,28 @@
 // bill calculation (NOT a proxy of an existing backend endpoint — existing
 // backend APIs are called client-side, see lib/api/client.ts).
 //
-// Flow: receive the form payload + Authorization header → fetch the
-// sla-status report (JSON) from the backend → parse the rows → validate IN
-// against the Dhaka city corporation boundary (data/dhaka.geojson) and
-// classify Out/Remote (with GraphHopper road-distance revalidation) → apply
-// rates, TAT and penalties → generate the billing .xlsx and return it as a
-// download.
+// Flow: receive the form payload + Authorization header → download the
+// sla-status report (JSON) from the backend in ≤5-day chunks, one chunk at a
+// time (the backend fails on full-month ranges; lib/billing/chunked-run.ts)
+// → parse the rows → validate IN against the Dhaka city corporation boundary
+// (data/dhaka.geojson) and classify Out/Remote (with GraphHopper
+// road-distance revalidation) → apply rates, TAT and penalties → generate the
+// billing .xlsx (with a "Chunk Details" audit sheet) and return it as a
+// download. Any permanently failed chunk aborts the run with an error naming
+// the chunk — no partial bill.
 
-import { apiErrorResponse, serverAPI } from "@/lib/api/server"
-import { processBilling, ROUTER_PROVIDER } from "@/lib/billing/calculate"
-import { parseSlaStatusResponse } from "@/lib/billing/parse"
+import { apiErrorResponse } from "@/lib/api/server"
+import { ROUTER_PROVIDER } from "@/lib/billing/calculate"
+import {
+  MAX_CHUNK_DAYS,
+  ChunkFailureError,
+  runChunkedBilling,
+} from "@/lib/billing/chunked-run"
+import { TRIP_STATUS_COLUMNS } from "@/lib/billing/parse"
 import {
   billingReportFileName,
   buildBillingWorkbook,
+  chunkSheetRows,
 } from "@/lib/billing/report"
 import { branchesForOrgs } from "@/lib/billing/org-branches"
 import { newRunId, saveRunFile } from "@/lib/billing/storage"
@@ -91,85 +100,81 @@ export async function POST(request: Request) {
   try {
     const runId = newRunId()
 
-    // 1. Fetch the sla-status report from the backend (Authorization header
-    //    wins over the session token; both are the same backend API token).
-    const sla = await serverAPI.billing.fetchSlaStatus(
-      {
-        dateFrom: payload.dateFrom,
-        dateTill: payload.dateTill,
-        page: payload.page ?? 1,
-        org_id: payload.org_id,
-        status: payload.status,
-        action_date_type: payload.action_date_type,
-      },
-      bearerToken(request)
-    )
-
-    // 2. Keep the raw response, then the submitted form values.
-    const sourceFile = await saveRunFile(
-      runId,
-      "source.json",
-      JSON.stringify(sla, null, 2)
-    )
+    // Keep the submitted form values first so even an aborted chunked run
+    // leaves the request behind for audits.
     await saveRunFile(runId, "request.json", JSON.stringify(payload, null, 2))
 
-    // 3. Parse + classify + bill.
-    let parsed
+    // Branch data only applies to orgs with a bundled dataset (Brac Bank
+    // PLC); anything else gets [] and keeps the backend classification.
+    const orgBranches = branchesForOrgs(payload.org_id)
+
+    // 1. Download the sla-status report in ≤MAX_CHUNK_DAYS-day chunks
+    //    (Authorization header wins over the session token; both are the same
+    //    backend API token) and bill each chunk as soon as its download lands.
+    let result
     try {
-      parsed = parseSlaStatusResponse(sla)
-    } catch (err) {
+      result = await runChunkedBilling({
+        payload,
+        token: bearerToken(request),
+        runId,
+        onParams: () => ({
+          rates: payload.rates,
+          holidays: payload.holidays ?? [],
+          branches: orgBranches?.branches ?? [],
+        }),
+      })
+    } catch (error) {
+      if (!(error instanceof ChunkFailureError)) throw error
+      // A chunk failed permanently: no partial bill — answer with an error
+      // that names the chunk so the user knows exactly what is missing.
       return Response.json(
         {
           success: false,
-          message:
-            err instanceof Error
-              ? err.message
-              : "Could not read the sla-status response",
+          message: error.message,
           runId,
-          sourceFile,
+          chunk: error.chunk,
+          phase: error.phase,
+          manifestFile: error.manifestFile,
         },
-        { status: 422 }
+        { status: error.phase === "calculation" ? 500 : 502 }
       )
     }
 
-    // An empty data array means the filters matched nothing — that is an
+    const { rows, summary } = result
+
+    // An empty data set means the filters matched nothing — that is an
     // input mistake, not a bill. Fail loudly instead of generating a 0-row
     // report.
-    if (parsed.rows.length === 0) {
+    if (summary.totalRows === 0) {
       return Response.json(
         {
           success: false,
-          message:
-            "The sla-status report contains no rows — check the date range, organization and status filters",
+          message: `The sla-status report contains no rows across ${result.totalChunks} chunk(s) — check the date range, organization and status filters`,
           runId,
-          sourceFile,
         },
         { status: 422 }
       )
     }
 
-    // Column order snapshot (before the billing keys are appended).
-    const baseHeaders = Object.keys(parsed.rows[0])
+    // Column order snapshot (before the billing keys are appended). Parse
+    // emits rows in exactly this order; unlike Object.keys(rows[0]) this is
+    // safe when the early chunks of the run came back empty.
+    const baseHeaders = [...TRIP_STATUS_COLUMNS]
 
-    const orgBranches = branchesForOrgs(payload.org_id)
-    const { rows, summary } = await processBilling(parsed.rows, {
-      rates: payload.rates,
-      holidays: payload.holidays ?? [],
-      // Branch data only applies to orgs with a bundled dataset (Brac Bank
-      // PLC); anything else gets [] and keeps the backend classification.
-      branches: orgBranches?.branches ?? [],
-    })
-
-    // 4. Generate the Excel report, archive it + the summary, return it.
+    // 2. Generate the Excel report, archive it + the summary, return it.
     const output = await buildBillingWorkbook(
       rows,
       baseHeaders,
-      parsed.dateFormats,
+      {}, // the sla-status JSON carries no cell formats; report default applies
       summary,
       {
         dateFrom: payload.dateFrom,
         dateTill: payload.dateTill,
         orgName: orgBranches?.orgName ?? null,
+        chunks: {
+          maxChunkDays: MAX_CHUNK_DAYS,
+          chunkRows: chunkSheetRows(result.chunks),
+        },
       }
     )
     await saveRunFile(runId, "billing_report.xlsx", output)
@@ -179,6 +184,9 @@ export async function POST(request: Request) {
       JSON.stringify(
         {
           request: payload,
+          chunked: true,
+          totalChunks: result.totalChunks,
+          chunks: result.chunks,
           // Which org's branch rules were applied (null = backend verdicts kept).
           branchDatasetOrg: orgBranches?.orgName ?? null,
           // IN validation source: coordinates inside this boundary are IN.

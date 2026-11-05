@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx"
 import ExcelJS from "exceljs"
+import type { ChunkRecord } from "./chunked-run"
 import type { ParsedTripFile } from "./parse"
 import {
   BILLING_COLUMN_HEADERS,
@@ -34,6 +35,14 @@ export interface BillingReportMeta {
   dateTill: string
   /** Org whose branch rules ran — null when the backend verdicts were kept. */
   orgName: string | null
+  /** Present when the range was downloaded in ≤maxChunkDays-day chunks. */
+  chunks?: ChunkedRunMeta
+}
+
+/** Per-chunk download/calculation audit for a chunked run. */
+export interface ChunkedRunMeta {
+  maxChunkDays: number
+  chunkRows: ChunkSheetRow[]
 }
 
 function round2(n: number): number {
@@ -108,6 +117,103 @@ function buildRouteFailuresSheet(rows: BillingRow[]): XLSX.WorkSheet | null {
   return ws
 }
 
+/** One "Chunk Details" row: what happened to one chunk of the date range. */
+export interface ChunkSheetRow {
+  chunk: number
+  dateFrom: string
+  dateTill: string
+  days: number
+  apiSuccess: boolean
+  retriesUsed: number
+  httpStatus: number | string
+  responseBytes: number
+  rowCount: number
+  billCalculated: boolean
+  calcDurationMs: number | null
+  comment: string
+}
+
+/** Map a chunked run's records onto "Chunk Details" sheet rows. */
+export function chunkSheetRows(chunks: ChunkRecord[]): ChunkSheetRow[] {
+  return chunks.map(({ download, calculation }) => {
+    let comment = "OK"
+    if (!download.success) {
+      comment = download.error ?? "Download failed"
+    } else if (!calculation.calculated) {
+      comment = calculation.error ?? "Calculation failed"
+    } else if (download.rowCount === 0) {
+      comment = "OK (empty)"
+    } else if (download.retriesUsed > 0) {
+      comment = `OK (${download.retriesUsed} retr${download.retriesUsed === 1 ? "y" : "ies"})`
+    }
+    return {
+      chunk: download.index,
+      dateFrom: download.dateFrom,
+      dateTill: download.dateTill,
+      days: download.days,
+      apiSuccess: download.success,
+      retriesUsed: download.retriesUsed,
+      httpStatus: download.httpStatus,
+      responseBytes: download.responseBytes,
+      rowCount: download.rowCount,
+      billCalculated: calculation.calculated,
+      calcDurationMs: calculation.durationMs,
+      comment,
+    }
+  })
+}
+
+const CHUNK_DETAIL_HEADERS = [
+  "Chunk #",
+  "Date From",
+  "Date Till",
+  "Days",
+  "API Success",
+  "Retries Used",
+  "HTTP/Envelope Status",
+  "Response Length (bytes)",
+  "Row Count",
+  "Bill Calculated",
+  "Calc Duration (s)",
+  "Comment",
+] as const
+
+/**
+ * Audit page for the chunked download: one row per chunk of the date range —
+ * what was requested, whether the API call succeeded (and after how many
+ * retries), how big the response was, whether the bill was calculated from
+ * it, and a comment carrying any failure message.
+ */
+function buildChunkDetailsSheet(rows: ChunkSheetRow[]): XLSX.WorkSheet {
+  const aoa: (string | number)[][] = [
+    [...CHUNK_DETAIL_HEADERS],
+    ...rows.map(
+      (r) =>
+        [
+          r.chunk,
+          r.dateFrom,
+          r.dateTill,
+          r.days,
+          r.apiSuccess ? "Yes" : "No",
+          r.retriesUsed,
+          String(r.httpStatus),
+          r.responseBytes,
+          r.rowCount,
+          r.billCalculated ? "Yes" : "No",
+          r.calcDurationMs === null ? "" : round2(r.calcDurationMs / 1000),
+          r.comment,
+        ] as (string | number)[]
+    ),
+  ]
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  ws["!cols"] = [
+    { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 11 },
+    { wch: 12 }, { wch: 20 }, { wch: 22 }, { wch: 10 }, { wch: 14 },
+    { wch: 15 }, { wch: 60 },
+  ]
+  return ws
+}
+
 /**
  * Human-facing first sheet: run context, totals, classification, not-billed
  * reasons and the penalty breakdown. Written as a plain AOA so it reads like
@@ -123,6 +229,10 @@ function buildSummarySheet(
     [],
     ["Organization", meta.orgName ?? "— (backend classification kept)"],
     ["Billing Period", `${meta.dateFrom} to ${meta.dateTill}`],
+    // How the backend download was split (chunked runs only).
+    ...(meta.chunks
+      ? [["Chunks", `${meta.chunks.chunkRows.length} × ≤${meta.chunks.maxChunkDays} days`]]
+      : []),
     ["Generated", `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`],
     [],
     ["Trips"],
@@ -308,6 +418,13 @@ export async function buildBillingWorkbook(
   if (routeFailuresSheet) {
     XLSX.utils.book_append_sheet(wb, routeFailuresSheet, "Route Failures")
   }
+  // Always last — the chunked-download audit trail ships even when every
+  // chunk succeeded, so the bill's provenance lives on the file itself.
+  XLSX.utils.book_append_sheet(
+    wb,
+    buildChunkDetailsSheet(meta.chunks?.chunkRows ?? []),
+    "Chunk Details"
+  )
   const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer
   // Yellow-fill the manual-check rows — SheetJS alone cannot write styles.
   return highlightAttentionRows(buffer)
