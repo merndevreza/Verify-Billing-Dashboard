@@ -180,7 +180,7 @@ so each classification is verifiable; a rejected-IN row carries the
 
 **File:** `lib/billing/report.ts` — `buildBillingWorkbook()`
 
-The workbook has three sheets, **"Billing Summary" first**:
+The workbook has four sheets, **"Billing Summary" first**:
 
 - **Billing Summary** (`buildSummarySheet` + `penaltyBreakdown`): run context
   (org, billing period, generated timestamp), Total/Billed trips, Total
@@ -194,6 +194,14 @@ The workbook has three sheets, **"Billing Summary" first**:
   `Price After Penalty`, `Compared Branches And Distances` (the per-row audit
   trail from `classify()`). Date cells use the report's default date format;
   a grand-total row closes the sheet.
+- **Request Details** (`buildRequestDetailsSheet`): the request behind the
+  bill and its generator — the session user (name + email), billing period,
+  organization (name + uuids), the `status` filter rendered as label strings
+  (`APPLICATION_STATUS_LABELS` in `lib/types/billing.ts`: 6 = Submitted, 7 =
+  Partially Submitted, 8 = Withdrawn; absent = "All statuses"), billing type,
+  the forwarded holiday dates, and the three rates.
+- **Chunk Details** (`buildChunkDetailsSheet`): per-chunk
+  download/calculation audit, always the last sheet.
 
 `billingReportFileName()` names the file
 `Billing_Report_<from>_to_<till>.xlsx`.

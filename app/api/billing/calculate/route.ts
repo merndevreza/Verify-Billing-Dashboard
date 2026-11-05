@@ -12,6 +12,7 @@
 // "Chunk Details" audit sheet) and return it as a download. Any permanently
 // failed chunk aborts the run with an error naming the chunk — no partial bill.
 
+import { auth } from "@/auth"
 import { apiErrorResponse } from "@/lib/api/server"
 import { loadIsochrones } from "@/lib/billing/isochrones"
 import { isochronesForOrgs } from "@/lib/billing/org-isochrones"
@@ -99,6 +100,9 @@ export async function POST(request: Request) {
     // leaves the request behind for audits.
     await saveRunFile(runId, "request.json", JSON.stringify(payload, null, 2))
 
+    // Session user, recorded on the report's "Request Details" sheet.
+    const session = await auth()
+
     // Resolve branch isochrones: throws when branch data is missing or
     // generation fails, returns null when the org is not in the registry.
     const orgBranches = branchesForOrgs(payload.org_id)
@@ -180,6 +184,17 @@ export async function POST(request: Request) {
         chunks: {
           maxChunkDays: MAX_CHUNK_DAYS,
           chunkRows: chunkSheetRows(result.chunks),
+        },
+        request: {
+          orgIds: payload.org_id,
+          status: payload.status,
+          billingType: payload.billingType,
+          holidays: payload.holidays,
+          rates: payload.rates,
+          generatedBy: {
+            name: session?.user?.name ?? null,
+            email: session?.user?.email ?? null,
+          },
         },
       }
     )

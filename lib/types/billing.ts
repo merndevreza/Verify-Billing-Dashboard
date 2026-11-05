@@ -3,6 +3,15 @@ import type { DateRange } from "react-day-picker"
 /** How trips are grouped on the bill. */
 export type BillingType = "trip" | "file"
 
+/** Backend application-status IDs forwarded to the sla-status filter, with
+ *  their display labels — shared so the report's Request Details sheet
+ *  renders the exact strings the Status filter stands for (must stay 6/7/8). */
+export const APPLICATION_STATUS_LABELS: Record<number, string> = {
+  6: "Submitted",
+  7: "Partially Submitted",
+  8: "Withdrawn",
+}
+
 /** Form values collected by the /bill-generation form (React Hook Form). */
 export interface BillFormValues {
   dateRange: DateRange
