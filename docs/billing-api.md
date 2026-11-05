@@ -10,8 +10,8 @@ BillGenerationClient.tsx        route.ts                    lib/billing/*
 │ form ── onSubmit() │ ──────▶ │ validate()       │
 │ fetch + Bearer     │         │ fetchSlaStatus ──▶ backend (sla-status JSON)
 └────────────────────┘         │ parseSlaStatusResponse
-                               │ branchesForOrgs
-                               │ processBilling ──▶ graphhopper (road distances)
+                               │ branchesForOrgs + isochronesForOrgs
+                               │ processBilling ──▶ isochrone containment (local polygons)
                                │ buildBillingWorkbook
                                └──────┬───────────┘
                           .xlsx download + summary.json archive
@@ -71,12 +71,13 @@ HTTP response) becomes a `502` carrying the backend's `message`.
 
 Every calculation gets a folder `.data/billing/<runId>/` (gitignored):
 
-| File                | Written at   | Content                       |
-| ------------------- | ------------ | ----------------------------- |
-| `source.json`       | Step 3       | the raw backend response      |
-| `request.json`      | Step 3       | the submitted payload         |
-| `summary.json`      | Step 7       | result + how the run decided  |
-| `billing_report.xlsx` | Step 7     | the generated report          |
+| File                    | Written at        | Content                            |
+| ----------------------- | ----------------- | ---------------------------------- |
+| `request.json`          | before Step 2     | the submitted payload              |
+| `source-chunk-NN.json`  | per chunk         | the raw backend response of a chunk |
+| `chunks.json`           | end of the run    | per-chunk download/calculation audit |
+| `summary.json`          | Step 7            | result + how the run decided       |
+| `billing_report.xlsx`   | Step 7            | the generated report               |
 
 `runId` is also returned to the caller as the `X-Run-Id` response header —
 quote it when auditing a report.
@@ -98,67 +99,70 @@ It:
 - leaves `dateFormats` empty — dates arrive as Excel serial numbers and the
   report applies its `DEFAULT_DATE_FORMAT`.
 
-## Step 5 — Which org's branch rules apply?
+## Step 5 — Which org's isochrone rules apply?
 
-**Files:** `lib/billing/org-branches.ts` → `branches.ts`
+**Files:** `lib/billing/org-branches.ts` → `branches.ts`, `lib/billing/org-isochrones.ts`
 
 `branchesForOrgs(payload.org_id)` resolves each org uuid (numeric ids also
 work) through `ORG_BRANCHES` — a registry built by matching the `org_uuid` in
 each `data/*_branches.json` against `data/org_data.json`. Currently only
-`data/brac_branches.json` (Brac Bank PLC) exists; every other org gets
-`branches: null`.
+`data/brac_branches.json` (Brac Bank PLC) exists. It supplies the org name
+for the report and the archive.
 
-Result: `{ orgName, branches }` — or `null` when ANY selected org has no
-dataset. Mixed selections never get branch checks; that is deliberate.
+`isochronesForOrgs(payload.org_id)` resolves the org's isochrone dataset
+through `data/org_registry.json`: an org classifies through isochrone
+containment only when it has a `branches_isochrone` path **and**
+`isIsochroneUpdated: true`. Result: `{ orgName, file }` — or `null` when ANY
+selected org has no current dataset. Mixed selections never get branch rules;
+that is deliberate.
 
-**To onboard a new org:** drop `data/<org>_branches.json` (same shape) and add
-one entry to `BRANCH_FILES` in `org-branches.ts`.
+**To onboard a new org:** generate `data/<org>_branches_isochrones.geojson`
+with `scripts/generate-isochrones.mjs` (needs the self-hosted GraphHopper
+server, `../graphhopper-bd`), then set `branches_isochrone` +
+`isIsochroneUpdated` in `data/org_registry.json`.
 
 ## Step 6 — The billing engine
 
 **File:** `lib/billing/calculate.ts` — `processBilling(rows, params)`
 
 `params` carries rates, the 7-step penalty ladder, holidays and the org's
-branch list. Work is distributed over 8 async workers pulling from a shared
-cursor (single-threaded JS, so the cursor is race-free).
+branch isochrones (`loadIsochrones()` in `lib/billing/isochrones.ts` — read
+from disk once per process and cached, so a regenerated file is picked up on
+server restart without a rebuild). `processBilling` is fully synchronous:
+every classification is a local point-in-polygon test, no routing calls.
 
 ### 6a. Classification — `classify(row)`
 
 Decides IN / OUT / REMOTE for one row, in this exact order:
 
-1. **Rule 1:** backend said `IN` → stays `IN`, done.
-2. Backend said anything but `OUT`/`REMOTE` → `null` (counted as
-   `unclassified`).
-3. **No branch dataset** (`branches: []`) → the backend's OUT/REMOTE is kept
-   verbatim, audit note `"organization has no branch dataset; backend
-   classification kept"`. Non-Brac orgs live entirely on this path.
-4. **Step A — district sadar** (`branches.ts: isDistrictSadarAddress`):
-   address contains "<District> Sadar" (normalization handles
-   "COX'S BAZAR SADAR") → `OUT`, no routing.
-5. **Dhaka rule** (`branches.ts: isDhakaDistrict`): Dhaka-district trips are
-   always `OUT` here — inside-metro ones already stayed IN via Rule 1.
-6. **Step B** (`branches.ts: branchesForDistrict` via `districtBranchIndex`,
-   category `"out"` branches only, with `DISTRICT_ALIASES` smoothing
-   spellings like Bogura/Bogra): no eligible branch in the district →
-   `REMOTE` (Rule 11.B).
-7. Invalid coordinates → `INVALID_COORDINATES` marker.
-8. **Straight-line prefilter** (`haversineM` from the active router file):
-   road distance ≥ straight-line, so a branch whose own `max_distance_km` is
-   already exceeded by the straight line can never yield OUT — its route call
-   is skipped (lossless). Survivors are tried nearest-first.
-9. **Road distance** (`routeWithCache` → `routeDistanceM`): first branch that
-   fits its radius settles `OUT` (remaining branches are not routed);
-   `REMOTE` only when EVERY candidate was measured and exceeded. Any failed
-   measurement → `ROUTE_DISTANCE_UNAVAILABLE` — the row is never guessed.
-   - 30 consecutive failures trip the circuit breaker (`routerDown`) for the
-     rest of the run.
-   - Results are cached per `branch.id + ~11 m grid` so overlapping trips
-     share route calls.
+1. Backend's `in_out_remote` is anything but IN/OUT/REMOTE → `null`
+   (counted as `unclassified`).
+2. **Step 0 — Dhaka boundary** (`lib/billing/dhaka-boundary.ts`, over
+   `data/dhaka.geojson`): coordinates inside the Dhaka city corporation
+   boundary → `IN`, no matter what the backend claimed. A claimed-`IN` row
+   outside the boundary is rejected (audited) and falls through to the
+   isochrone steps like any other non-IN row.
+3. **No current isochrone dataset** (`isochrones: []`) → the backend's
+   OUT/REMOTE is kept verbatim, audit note `"organization has no branch
+   isochrone dataset; backend classification kept"`. Non-Brac orgs live
+   entirely on this path. A rejected-IN row has no backend OUT/REMOTE verdict
+   to keep and no rule set to reclassify with, so it is left unbilled
+   (`unclassified`) with the rejection noted.
+4. Invalid coordinates → `INVALID_COORDINATES` marker (containment is
+   undefined without a point).
+5. **Isochrone containment** (`lib/billing/isochrones.ts` →
+   `findIsochroneMatches`): the trip end point is tested against every branch
+   isochrone of the org's geojson (bounding-box pre-filter, then even-odd
+   ray-cast — no network calls).
+   - inside any **"in"-category** branch's isochrone (Dhaka branches) →
+     `IN` (wins when isochrones overlap);
+   - else inside any **"out"-category** branch's isochrone → `OUT`;
+   - else → `REMOTE` (`NO_ISOCHRONE_MATCH` in the audit column).
 
-**Router provider** is chosen by which import is active at the top of
-`calculate.ts` — `graphhopper.ts` (self-hosted, `GRAPHHOPPER_URL`) or
-`barikoi-routing.ts` (`BARIKOI_API_KEY`). Both export the same
-`routeDistanceM` / `haversineM` / `ROUTER_PROVIDER` contract.
+Every containing branch is listed in the audit column as
+`<branch name> [<category>]` (e.g. `Gulshan Branch [in]; Tongi Branch [out]`),
+so each classification is verifiable; a rejected-IN row carries the
+`IN claim rejected: …` prefix ahead of its matches.
 
 ### 6b. TAT + penalty — `applyBilling(row, zone)`
 
@@ -176,7 +180,7 @@ Decides IN / OUT / REMOTE for one row, in this exact order:
 
 **File:** `lib/billing/report.ts` — `buildBillingWorkbook()`
 
-The workbook has two sheets, **"Billing Summary" first**:
+The workbook has three sheets, **"Billing Summary" first**:
 
 - **Billing Summary** (`buildSummarySheet` + `penaltyBreakdown`): run context
   (org, billing period, generated timestamp), Total/Billed trips, Total
@@ -207,7 +211,8 @@ The workbook has two sheets, **"Billing Summary" first**:
 
 The client (`BillGenerationClient.tsx`) turns the body into a browser
 download, reads the headers for the success toast, and keeps a loading dialog
-open for the duration (reports can take minutes).
+open for the duration (the backend download is chunked and strictly
+sequential).
 
 ---
 
@@ -218,11 +223,12 @@ open for the duration (reports can take minutes).
 | `400`                       | `route.ts: validate()`   | request rejected             |
 | `422` unusable response     | `route.ts` catch         | runId + sourceFile returned  |
 | `422` zero rows             | `route.ts`               | filters were wrong, no bill  |
-| `ROUTE_DISTANCE_UNAVAILABLE`| `classify()`             | row skipped, never guessed   |
 | `INVALID_COORDINATES`       | `classify()`             | row skipped                  |
-| `unclassified`              | `classify()`             | `in_out_remote` not IN/OUT/REMOTE |
+| `unclassified`              | `classify()`             | `in_out_remote` not IN/OUT/REMOTE, or a rejected-IN row with no isochrone dataset |
 | `tatUnavailable`            | `applyBilling()`         | classification kept, no price|
+| missing/corrupt isochrone file | `loadIsochrones()`    | run fails loudly — no billing without the rule set |
 
 All counts land in `summary.json` next to `request`, `branchDatasetOrg`
-(which org's rules ran) and `routingProvider` — an archive can always answer
-"what produced this bill?".
+(which org's rules ran), `dhakaBoundary` (the IN-validation source) and
+`isochroneDataset` (the containment source, null when the backend verdicts
+were kept) — an archive can always answer "what produced this bill?".

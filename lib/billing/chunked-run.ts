@@ -9,8 +9,7 @@
 //
 // Each chunk's raw response is archived (source-chunk-NN.json) and its bill
 // calculation is chained to start immediately, overlapping the NEXT chunk's
-// download while never running two processBilling calls at once (the router
-// already bounds its own concurrency at ROUTE_CONCURRENCY).
+// download while never running two processBilling calls at once.
 //
 // Any permanently failed chunk — download after retries, unparseable
 // response, or a calculation error — aborts the whole run: chunks.json
@@ -150,7 +149,6 @@ export function mergeSummaries(summaries: BillSummary[]): BillSummary {
     totalRows: 0,
     billed: 0,
     classification: { in: 0, out: 0, remote: 0 },
-    routeUnavailable: 0,
     invalidCoordinates: 0,
     tatUnavailable: 0,
     unclassified: 0,
@@ -162,7 +160,6 @@ export function mergeSummaries(summaries: BillSummary[]): BillSummary {
     merged.classification.in += s.classification.in
     merged.classification.out += s.classification.out
     merged.classification.remote += s.classification.remote
-    merged.routeUnavailable += s.routeUnavailable
     merged.invalidCoordinates += s.invalidCoordinates
     merged.tatUnavailable += s.tatUnavailable
     merged.unclassified += s.unclassified
@@ -224,7 +221,7 @@ export interface RunChunkedBillingOptions {
   /** Bearer token from the incoming request; falls back to the session. */
   token?: string
   runId: string
-  /** Rates/holidays/branches for processBilling — resolved once by the route. */
+  /** Rates/holidays/isochrones for processBilling — resolved once by the route. */
   onParams: () => BillingParams
 }
 

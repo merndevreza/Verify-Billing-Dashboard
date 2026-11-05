@@ -12,7 +12,7 @@ Standalone dashboard for billing calculation and per-organization **Excel report
 | UI | shadcn/ui (base-ui based, `base-nova` style) + Tailwind CSS v4 |
 | State | Redux Toolkit |
 | Auth | NextAuth v5 (beta) — Credentials provider, JWT strategy |
-| Routing distances | Self-hosted GraphHopper 11.1 **or** Barikoi routing API — switchable with one import in `lib/billing/calculate.ts` |
+| Trip classification | Point-in-isochrone containment over bundled branch isochrones (`data/*_branches_isochrones.geojson`) — no routing API at billing time |
 | Excel processing | SheetJS (`xlsx`) — reads the backend's BIFF `.xls`, writes the `.xlsx` report |
 | Icons / Notifications | lucide-react / sonner |
 
@@ -24,24 +24,18 @@ cp .env.example .env         # fill in values
 npm run dev                  # http://localhost:3000
 ```
 
-Start the routing server (required for Out/Remote classification when using the GraphHopper provider):
+Regenerating the branch isochrones (only needed when a branch dataset changes) requires the self-hosted GraphHopper server:
 
 ```bash
 cd ../graphhopper-bd
 ./scripts/download.sh        # one-time: GraphHopper JAR + Bangladesh OSM extract
 docker compose up -d         # first start imports OSM (10–20 min)
+node scripts/generate-isochrones.mjs   # from this repo — writes data/*_branches_isochrones.geojson
 ```
 
-### Routing provider
+### Branch isochrones
 
-`lib/billing/calculate.ts` picks the distance provider with one import — both files export the same interface (currently the Barikoi API is active):
-
-```ts
-// import { haversineM, routeDistanceM } from "./graphhopper" // self-hosted GraphHopper
-import { haversineM, routeDistanceM } from "./barikoi-routing" // Barikoi routing API
-```
-
-The Barikoi provider needs `BARIKOI_API_KEY` in `.env` and uses the `motorcycle` profile. Note the two engines weight roads differently, so distances (and a few boundary OUT/REMOTE rows) can differ between providers — the `Compared Branches And Distances` audit column always shows the distances actually used.
+`data/brac_branches_isochrones.geojson` holds one distance-based isochrone Polygon per BRAC branch (the branch's `max_distance_km` serving radius, `category: "in"` for Dhaka branches / `"out"` for upcountry), generated offline by `scripts/generate-isochrones.mjs` against the self-hosted GraphHopper server (`../graphhopper-bd`, motorcycle profile). Billing never calls a routing API: `lib/billing/isochrones.ts` loads the file at runtime (parsed once per process — a regenerated file is picked up on server restart, no rebuild) and each trip end point is classified by point-in-polygon containment. Which org uses which file is decided in `data/org_registry.json` (`branches_isochrone` path + `isIsochroneUpdated` flag).
 
 ### Environment
 
@@ -49,8 +43,7 @@ The Barikoi provider needs `BARIKOI_API_KEY` in `.env` and uses the `motorcycle`
 | --- | --- |
 | `NEXT_PUBLIC_API_BASE_URL` | Verify backend base URL (staging: `https://api.verify.barikoimaps.dev`, production: `https://api.verify.bmapsbd.com`) |
 | `NEXTAUTH_SECRET` | NextAuth JWT signing (reuse v3's) |
-| `GRAPHHOPPER_URL` | Routing server (default `http://localhost:8989`) |
-| `BARIKOI_API_KEY` | Barikoi routing API key (only for the Barikoi provider) |
+| `GRAPHHOPPER_URL` | Only for isochrone regeneration (`scripts/generate-isochrones.mjs`; default `http://localhost:8989`) |
 
 ## How bill generation works
 
@@ -70,26 +63,25 @@ Response streams the generated .xlsx back (browser downloads it)
 
 ### 1. Trip classification
 
-Every trip is **revalidated server-side** — the backend's existing `in_out_remote` value is only a starting point. The final classification is written back into that column.
+Every trip is **revalidated server-side** — the backend's existing `in_out_remote` value is only a starting point. The final classification is written back into that column. Classification is fully local: a Dhaka-boundary test plus point-in-isochrone containment, no routing calls.
 
 | Rule | Result |
 | --- | --- |
-| Existing classification is `IN` | Stays `IN`. No distance calculation. |
-| Address contains the trip's district name followed by “Sadar” | `OUT` — inside the district's sadar area, no branch check needed. |
-| District is Dhaka (outside the metro; inside-metro trips are already `IN`) | `OUT` — confirmed business rule, no branch check. |
-| Otherwise: look up branches in `data/brac_branches.json` whose `district` matches the trip's district (`category: "out"` only) | No eligible branch → `REMOTE` (billing continues normally). |
-| Straight-line prefilter + nearest-first ordering | Branches already farther than their own `max_distance_km` **by straight line** are skipped without routing (road distance ≥ straight-line, so they can never qualify) — lossless. Survivors are routed nearest-first. |
-| Motorcycle **road distance** (routing provider, `motorcycle` profile) — **OUT on first fit** | As soon as **any** candidate fits within its **own** `max_distance_km` → `OUT`; remaining branches are not measured. `REMOTE` only after **every** candidate was measured and exceeded its radius. |
+| `in_out_remote` value is not IN/OUT/REMOTE | Left as-is; billing columns left empty (unclassified). |
+| Coordinates inside the **Dhaka city corporation boundary** (`data/dhaka.geojson`) | `IN` — regardless of what the backend claimed. A claimed-`IN` trip outside the boundary is rejected (audited) and reclassified by the rules below. |
+| Trip end point inside any **"in"-category** branch's isochrone (Dhaka branches) | `IN` — wins when isochrones overlap. |
+| Trip end point inside any **"out"-category** branch's isochrone | `OUT`. |
+| Trip end point inside no branch isochrone | `REMOTE` (`NO_ISOCHRONE_MATCH` in the audit column). |
 
-District spellings are normalized before matching, with aliases for common variants (Bogura/Bogra, Jashore/Jessore, Chittagong/Chattogram, Barisal/Barishal, Comilla/Cumilla, …), so a spelling mismatch never silently reclassifies a district as Remote.
+Every containing branch is listed in the audit column as `<branch name> [<category>]`, so each classification is verifiable.
 
-**Failure handling** — a failed lookup must never become a wrong classification:
+**Failure handling** — missing data must never become a guessed classification:
 
 | Situation | Behavior |
 | --- | --- |
-| The routing provider cannot route a trip | Classification cell becomes `ROUTE_DISTANCE_UNAVAILABLE`; billing columns left empty; the row is preserved; the run continues. A failed route never becomes a guessed REMOTE. |
-| Router down for the whole run (30 consecutive failures) | Remaining route-dependent rows short-circuit to `ROUTE_DISTANCE_UNAVAILABLE` instead of hammering a dead server. |
 | Missing/invalid trip coordinates | Classification cell becomes `INVALID_COORDINATES`; billing columns left empty. |
+| Org has no current isochrone dataset (`data/org_registry.json`) | The backend's OUT/REMOTE verdict is kept verbatim; a rejected-IN row has no verdict to keep and is left unbilled (unclassified). |
+| The org's isochrone file is missing/corrupt | The run fails loudly (`loadIsochrones()` throws) instead of billing without its rule set. |
 | `in_out_remote` value is not IN/OUT/REMOTE | Left as-is; billing columns left empty. |
 
 ### 2. Per-trip billing calculation
@@ -119,17 +111,16 @@ The audit column makes every classification verifiable:
 
 | Content | Meaning |
 | --- | --- |
-| `Sonargaon Branch: 13.55 km ≤ 30 km limit, remaining branches not routed` | Early exit — first fitting branch decided OUT; later candidates were not measured. |
-| `Coxs Bazar Branch: 35.79 km > 35 km limit` | Routed candidate that exceeded its radius (REMOTE once all candidates exceeded). |
-| `Jessore Branch: straight-line 80.33 km > 35 km limit, not routed` | Branch skipped by the straight-line prefilter. |
-| `Dhaka district; no branch check` / `district-sadar address; no branch check` | Classified without routing. |
-| `no eligible branch for district "X"` | Rule: no matching branch → Remote. |
-| `Shariatpur Sub branch: route failed` | Routing failed — row is `ROUTE_DISTANCE_UNAVAILABLE`. |
-| empty | No comparison happened (IN trips, invalid coordinates, unclassified). |
+| `Gulshan Branch [in]` | Point inside that Dhaka branch's isochrone → IN. |
+| `Gulshan Branch [in]; Tongi Branch [out]` | Overlapping isochrones — all containing branches listed; IN wins. |
+| `Tongi Branch [out]` | Point inside an upcountry branch's isochrone → OUT. |
+| `NO_ISOCHRONE_MATCH` | Point in no branch isochrone → REMOTE. |
+| `IN claim rejected: coordinates outside the Dhaka city corporation boundary; Tongi Branch [out]` | Claimed-IN trip reclassified by containment after failing the boundary test. |
+| empty | No containment happened (IN via Dhaka boundary, invalid coordinates, unclassified). |
 
 ### Performance
 
-Sized for 15,000–16,000-row (30-day) reports: rows are processed in place (no copies), route calls are prefiltered by straight-line distance, ordered nearest-first with an early exit on the first fitting branch, cached per branch + ~11 m coordinate key, run with bounded concurrency (8 workers), and a circuit breaker stops route calls when the router is down. The 663-row sample report processes in a couple of seconds against the remote Barikoi API.
+Sized for 15,000–16,000-row (30-day) reports: rows are processed in place (no copies) in a single synchronous pass. Each classification is two local geometric tests — a bounding-box pre-filter followed by an even-odd ray-cast over the 73 isochrone polygons (microseconds per row) — and the isochrone geojson is parsed once per process. Wall-clock time is dominated by the chunked backend download, not the calculation.
 
 ## API routes
 
@@ -168,9 +159,12 @@ Existing backend APIs (direct, Network-tab visible):
 
 New billing APIs (server-side logic):
   Browser ──▶ app/api/billing/calculate ──▶ parse + classify + bill ──▶ .xlsx download
-                     │  backend input data via Bearer token        ▲
-                     ▼                                             │ motorcycle road distances
-              Verify backend  ────────────────────▶  routing provider (GraphHopper :8989 or Barikoi API)
+                     │  backend input data via Bearer token
+                     ▼
+              Verify backend
+
+  Classification data (local files, no network at billing time):
+    data/dhaka.geojson + data/brac_branches_isochrones.geojson (via data/org_registry.json)
 ```
 
 - **Auth** — `auth.config.ts` / `auth.ts` / `proxy.ts`, login page at `app/login`, session carries `accessToken`, `user`, `permissions`, `vendor_id`. Next 16 proxy convention (`proxy.ts`) replaces v3's deprecated `middleware.ts`.
@@ -195,18 +189,25 @@ app/
 └── page.tsx                          # redirect → /bill-generation
 config/menu.ts                        # sidebar menu + page titles
 data/
-└── brac_branches.json                # bank branches: name, lat/lon, district,
-                                      #   max_distance_km (serving radius), category in/out
+├── org_registry.json                  # org → isochrone file (branches_isochrone) + isIsochroneUpdated
+├── brac_branches.json                 # BRAC branches: name, lat/lon, district,
+│                                      #   max_distance_km (serving radius), category in/out
+├── brac_branches_isochrones.geojson   # one Polygon per branch, category in/out (generated)
+└── dhaka.geojson                      # Dhaka city corporation boundary (IN test)
 lib/
 ├── api/{client,server,fetcher}.ts    # two-layer API (client → backend / routes → backend)
 ├── auth/clientAuth.tsx               # useAuth() hook (user, token, logout)
 ├── billing/
-│   ├── barikoi-routing.ts            # Barikoi routing API client (motorcycle, BARIKOI_API_KEY)
-│   ├── branches.ts                   # branch index, district normalization/aliases, sadar check
+│   ├── branches.ts                   # Branch shape of data/*_branches.json
 │   ├── calculate.ts                  # classification engine + TAT/penalty/price per trip
+│   ├── chunked-run.ts                # ≤5-day chunked download + pipelined calculation
 │   ├── dates.ts                      # timezone-safe calendar math, Excel serial parsing
-│   ├── graphhopper.ts                # GraphHopper road-distance client + haversine (alt. provider)
+│   ├── dhaka-boundary.ts             # Dhaka city boundary loader + IN test
+│   ├── isochrones.ts                 # isochrone loader + point-in-isochrone containment
+│   ├── org-branches.ts               # org → branch dataset registry
+│   ├── org-isochrones.ts             # org → isochrone dataset registry (org_registry.json)
 │   ├── parse.ts                      # .xls parsing (+ source date-format detection)
+│   ├── point-in-polygon.ts           # shared ray-cast / bounding-box helpers
 │   ├── report.ts                     # .xlsx report builder
 │   ├── storage.ts                    # run archive under gitignored .data/billing/<runId>/
 │   └── types.ts                      # row/column/summary types

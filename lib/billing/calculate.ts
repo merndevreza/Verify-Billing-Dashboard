@@ -1,16 +1,9 @@
-// Core billing engine: classification (Dhaka boundary + Rule 2 + 11), TAT
-// (Rule 4, 5, 11.A), penalty (Rule 6) and final price (Rule 7). Runs on the
-// parsed trip rows in place — no row copies — and routes Out/Remote
-// candidates through the selected routing provider (see import below) with
-// caching, a straight-line prefilter, nearest-first early exit and bounded
-// concurrency.
+// Core billing engine: classification (Dhaka boundary validation + branch
+// isochrone containment), TAT (Rule 4, 5), penalty (Rule 6) and final price
+// (Rule 7). Runs on the parsed trip rows in place — no row copies — and is
+// fully synchronous: every classification is a local point-in-polygon test
+// against the org's branch isochrones (see isochrones.ts), no routing calls.
 
-import {
-  branchesForDistrict,
-  districtBranchIndex,
-  isDhakaDistrict,
-  type Branch,
-} from "./branches"
 import {
   countHolidaysBetween,
   diffCalendarDays,
@@ -18,14 +11,7 @@ import {
   parseDateTimeSerial,
 } from "./dates"
 import { isInsideDhakaBoundary } from "./dhaka-boundary"
-// Routing provider — pick ONE by commenting the other out.
-// 1. graphhopper: self-hosted GraphHopper (graphhopper-bd docker, GRAPHHOPPER_URL)
-// 2. barikoi-routing: Barikoi routing API (needs BARIKOI_API_KEY in .env)
-
-import { routeDistanceM } from "./graphhopper"
- export { ROUTER_PROVIDER } from "./graphhopper"
-// import { routeDistanceM } from "./barikoi-routing"
-// export { ROUTER_PROVIDER } from "./barikoi-routing"
+import { findIsochroneMatches, type BranchIsochrone } from "./isochrones"
 
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
@@ -34,26 +20,24 @@ export interface BillingParams {
   /** ISO calendar dates (yyyy-mm-dd) excluded from the TAT count. */
   holidays: string[]
   /**
-   * The selected org's branch dataset (branchesForOrgs). Empty → the org has
-   * no bundled branch data: no Dhaka rule, no branch distance checks — the
-   * backend's OUT/REMOTE classification stands as-is.
+   * The selected org's branch isochrone polygons (loadIsochrones). Empty →
+   * the org has no isochrone dataset: no reclassification — the backend's
+   * OUT/REMOTE classification stands as-is.
    */
-  branches: Branch[]
+  isochrones: BranchIsochrone[]
 }
 
 /** Completion SLA per zone, in days (Rule 5). */
 const EXPECTED_DAYS = { IN: 1, OUT: 2, REMOTE: 3 } as const
 type Zone = keyof typeof EXPECTED_DAYS
 
-/** Rule 11.C — routing failed; billing skipped for the row. */
-export const ROUTE_UNAVAILABLE_MARKER = "ROUTE_DISTANCE_UNAVAILABLE"
-/** Row needs routing but its coordinates are missing/invalid. */
+/** The row's coordinates are missing/invalid; zone classification is impossible. */
 export const INVALID_COORDINATES_MARKER = "INVALID_COORDINATES"
 
 /** Rule 6 — SLA-breach penalty: 10% per extra TAT day, capped at 100%. */
 const PENALTY_PERCENT_PER_DAY = 10
 const MAX_PENALTY_PERCENT = 100
-const ROUTE_CONCURRENCY = 8
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
@@ -62,52 +46,35 @@ function toCoord(value: unknown): number {
   return typeof value === "number" ? value : Number(String(value ?? "").trim())
 }
 
-/** The "Attention Needed" cell: joined hybrid-estimate notes, or null. */
-function attentionFrom(estimateNotes: string[]): string | null {
-  if (estimateNotes.length === 0) return null
-  return `Estimated distance — ${estimateNotes.join("; ")}`
-}
-
-export async function processBilling(
+export function processBilling(
   rows: TripStatusRow[],
   params: BillingParams
-): Promise<{ rows: BillingRow[]; summary: BillSummary }> {
+): { rows: BillingRow[]; summary: BillSummary } {
   const holidays = new Set(params.holidays)
-  const districtIndex = districtBranchIndex(params.branches)
   const summary: BillSummary = {
     totalRows: rows.length,
     billed: 0,
     classification: { in: 0, out: 0, remote: 0 },
-    routeUnavailable: 0,
     invalidCoordinates: 0,
     tatUnavailable: 0,
     unclassified: 0,
     totalAmount: 0,
   }
 
-  type ClassifyOutcome =
-    | Zone
-    | null
-    | typeof ROUTE_UNAVAILABLE_MARKER
-    | typeof INVALID_COORDINATES_MARKER
+  type ClassifyOutcome = Zone | null | typeof INVALID_COORDINATES_MARKER
 
   interface ClassifyResult {
     outcome: ClassifyOutcome
-    /** Human-readable audit trail of the branch comparisons for this row. */
+    /** Human-readable audit trail of the isochrone matches for this row. */
     comparison: string | null
-    /**
-     * Manual-check flag for rows whose distance came from the hybrid
-     * estimate — null when every routed distance was exact.
-     */
-    attention?: string | null
   }
 
   /**
-   * Dhaka boundary validation + Rule 2 + 11 for one row. Returns the final
-   * zone (null when the row cannot be classified, or a marker for the failure
-   * cases) plus the audit trail.
+   * Dhaka boundary validation + isochrone containment for one row. Returns
+   * the final zone (null when the row cannot be classified, or a marker for
+   * the invalid-coordinate case) plus the audit trail.
    */
-  async function classify(row: TripStatusRow): Promise<ClassifyResult> {
+  function classify(row: TripStatusRow): ClassifyResult {
     const existing = String(row.in_out_remote ?? "").trim().toUpperCase()
     if (existing !== "IN" && existing !== "OUT" && existing !== "REMOTE") {
       return { outcome: null, comparison: null }
@@ -116,7 +83,7 @@ export async function processBilling(
     // Step 0 — IN validation against the Dhaka city corporation boundary
     // (data/dhaka.geojson). Coordinates inside the boundary are IN no matter
     // what the backend claimed; a claimed-IN row that fails the boundary
-    // test is rejected and continues through the OUT/REMOTE steps below like
+    // test is rejected and continues through the isochrone steps below like
     // any other non-IN row.
     const lat = toCoord(row.Latitude)
     const lon = toCoord(row.Longitude)
@@ -150,18 +117,18 @@ export async function processBilling(
       auditPrefix = "IN claim rejected: coordinates missing or invalid"
     }
 
-    // Orgs without a bundled branch dataset: no reclassification — the
-    // backend's OUT/REMOTE stands: the rule set belongs to the branch
+    // Orgs without a current isochrone dataset: no reclassification — the
+    // backend's OUT/REMOTE stands: the rule set belongs to the isochrone
     // dataset, so orgs without one get the backend's verdict verbatim. A
     // rejected IN claim has no backend OUT/REMOTE verdict to keep and no
     // rule set to reclassify with, so it is left unbilled (unclassified)
     // with the rejection noted instead of being guessed.
-    if (params.branches.length === 0) {
+    if (params.isochrones.length === 0) {
       if (existing === "IN") {
         return {
           outcome: null,
           comparison: withPrefix(
-            "organization has no branch dataset to reclassify with"
+            "organization has no branch isochrone dataset to reclassify with"
           ),
         }
       }
@@ -169,88 +136,34 @@ export async function processBilling(
       return {
         outcome: kept,
         comparison:
-          "organization has no branch dataset; backend classification kept",
+          "organization has no branch isochrone dataset; backend classification kept",
       }
     }
 
-    // Confirmed rule: Dhaka-district trips outside the metro boundary are
-    // always OUT, no branch check.
-    if (isDhakaDistrict(row.District)) {
-      return {
-        outcome: "OUT",
-        comparison: withPrefix("Dhaka district; no branch check"),
-      }
-    }
-
-    // Eligible branches for this district (category "out" only).
-    const districtBranches = branchesForDistrict(row.District, districtIndex) ?? []
-    if (districtBranches.length === 0) {
-      // Rule 11.B
-      return {
-        outcome: "REMOTE",
-        comparison: withPrefix(
-          `no eligible branch for district "${row.District}"`
-        ),
-      }
-    }
-
-    // Coordinates are mandatory from here on: routing needs them. For
+    // Coordinates are mandatory from here on: containment needs them. For
     // claimed OUT/REMOTE rows this is the pre-existing check; a rejected IN
     // claim lands here too when its coordinates cannot be validated.
     if (!coordsValid) {
       return { outcome: INVALID_COORDINATES_MARKER, comparison: auditPrefix }
     }
 
-    const comparisons: string[] = []
-    /** Per-branch hybrid-estimate notes — non-empty → row needs manual check. */
-    const estimateNotes: string[] = []
-
-    // Route all eligible branches. OUT as soon as ANY candidate fits within
-    // its own radius; REMOTE only after every candidate was measured and
-    // exceeded its radius. Any failed candidate → Rule 11.C marker.
-    let measured = 0
-    let anyFailed = false
-    for (let i = 0; i < districtBranches.length; i++) {
-      const branch = districtBranches[i]
-      try {
-        const result = await routeDistanceM([lat, lon], [branch.lat, branch.lon])
-        measured++
-        const km = result.meters / 1000
-        if (result.estimated) {
-          estimateNotes.push(
-            `${branch.branch_name}: ${km.toFixed(2)} km (${result.note})`
-          )
-        }
-        if (km <= branch.max_distance_km) {
-          const earlyExit =
-            i < districtBranches.length - 1
-              ? ", remaining branches not routed"
-              : ""
-          comparisons.push(
-            `${branch.branch_name}: ${km.toFixed(2)} km ≤ ${branch.max_distance_km} km limit${earlyExit}`
-          )
-          return {
-            outcome: "OUT",
-            comparison: comparisons.join("; "),
-            attention: attentionFrom(estimateNotes),
-          }
-        }
-        comparisons.push(
-          `${branch.branch_name}: ${km.toFixed(2)} km > ${branch.max_distance_km} km limit`
-        )
-      } catch {
-        anyFailed = true
-        comparisons.push(`${branch.branch_name}: route failed`)
-      }
+    // Containment against the branch isochrones: IN when the point falls in
+    // any "in"-category branch's isochrone (Dhaka stations), OUT when it
+    // falls in any "out"-category branch's isochrone, REMOTE when it falls
+    // in none. IN wins on overlap; every match is listed for the audit.
+    const matches = findIsochroneMatches(params.isochrones, lat, lon)
+    const audit = withPrefix(
+      matches.length > 0
+        ? matches.map((m) => `${m.branchName} [${m.category}]`).join("; ")
+        : "NO_ISOCHRONE_MATCH"
+    )
+    if (matches.some((m) => m.category === "in")) {
+      return { outcome: "IN", comparison: audit }
     }
-    const attention = attentionFrom(estimateNotes)
-    return measured === districtBranches.length && !anyFailed
-      ? { outcome: "REMOTE", comparison: withPrefix(comparisons.join("; ")), attention }
-      : {
-          outcome: ROUTE_UNAVAILABLE_MARKER,
-          comparison: withPrefix(comparisons.join("; ")),
-          attention,
-        }
+    if (matches.some((m) => m.category === "out")) {
+      return { outcome: "OUT", comparison: audit }
+    }
+    return { outcome: "REMOTE", comparison: audit }
   }
 
   /** Rules 3–7 for a classified row. Returns false when TAT is not computable. */
@@ -291,7 +204,7 @@ export async function processBilling(
     return true
   }
 
-  async function processRow(row: TripStatusRow): Promise<void> {
+  function processRow(row: TripStatusRow): void {
     const billingRow = row as BillingRow
     billingRow["Submission Date"] = null
     billingRow["Rate"] = null
@@ -302,17 +215,11 @@ export async function processBilling(
     billingRow["Compared Branches And Distances"] = null
     billingRow["Attention Needed"] = null
 
-    const { outcome: zone, comparison, attention } = await classify(row)
+    const { outcome: zone, comparison } = classify(row)
     billingRow["Compared Branches And Distances"] = comparison
-    billingRow["Attention Needed"] = attention ?? null
 
     if (zone === null) {
       summary.unclassified++
-      return
-    }
-    if (zone === ROUTE_UNAVAILABLE_MARKER) {
-      row.in_out_remote = ROUTE_UNAVAILABLE_MARKER
-      summary.routeUnavailable++
       return
     }
     if (zone === INVALID_COORDINATES_MARKER) {
@@ -334,16 +241,9 @@ export async function processBilling(
     }
   }
 
-  let cursor = 0
-  const workerCount = Math.max(1, Math.min(ROUTE_CONCURRENCY, rows.length))
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (cursor < rows.length) {
-        const row = rows[cursor++]
-        await processRow(row)
-      }
-    })
-  )
+  for (const row of rows) {
+    processRow(row)
+  }
 
   summary.totalAmount = round2(summary.totalAmount)
   return { rows: rows as BillingRow[], summary }

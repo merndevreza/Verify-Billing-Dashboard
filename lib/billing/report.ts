@@ -7,7 +7,6 @@ import {
   type BillSummary,
   type BillingRow,
 } from "./types"
-import { ROUTE_UNAVAILABLE_MARKER } from "./calculate"
 
 /**
  * Fallback date display for when the source file carries no per-cell format
@@ -90,31 +89,6 @@ function penaltyBreakdown(rows: BillingRow[]): PenaltyBucket[] {
     bucket.penaltyAmount = round2(bucket.penaltyAmount)
   }
   return buckets
-}
-
-const ROUTE_FAILURE_HEADERS = [
-  "DepositId",
-  "RefId",
-  "District",
-  "Thana",
-  "Address",
-  "Latitude",
-  "Longitude",
-  "Compared Branches And Distances",
-] as const
-
-function buildRouteFailuresSheet(rows: BillingRow[]): XLSX.WorkSheet | null {
-  const failed = rows.filter((r) => r.in_out_remote === ROUTE_UNAVAILABLE_MARKER)
-  if (failed.length === 0) return null
-  const data = failed.map((r) =>
-    Object.fromEntries(ROUTE_FAILURE_HEADERS.map((h) => [h, r[h as keyof BillingRow] ?? ""]))
-  )
-  const ws = XLSX.utils.json_to_sheet(data, { header: [...ROUTE_FAILURE_HEADERS] })
-  ws["!cols"] = [
-    { wch: 14 }, { wch: 30 }, { wch: 14 }, { wch: 14 },
-    { wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 70 },
-  ]
-  return ws
 }
 
 /** One "Chunk Details" row: what happened to one chunk of the date range. */
@@ -246,7 +220,6 @@ function buildSummarySheet(
     ["REMOTE", summary.classification.remote],
     [],
     ["Not Billed"],
-    ["Route distance unavailable", summary.routeUnavailable],
     ["Invalid coordinates", summary.invalidCoordinates],
     ["TAT unavailable", summary.tatUnavailable],
     ["Unclassified", summary.unclassified],
@@ -334,7 +307,9 @@ async function highlightAttentionRows(buffer: Buffer): Promise<Buffer> {
  * stay blank. The three date columns get the same number format (the one
  * detected in the source file, or the export's default) so they render
  * identically. A grand-total row is appended under the data. Rows flagged in
- * "Attention Needed" (hybrid-estimated distances) are highlighted yellow.
+ * "Attention Needed" are highlighted yellow (no row is flagged since
+ * classification moved to isochrone containment — the pass is kept so a
+ * future manual-check flag lights up without touching the writer).
  */
 export async function buildBillingWorkbook(
   rows: BillingRow[],
@@ -414,10 +389,6 @@ export async function buildBillingWorkbook(
     "Billing Summary"
   )
   XLSX.utils.book_append_sheet(wb, ws, "Billing Report")
-  const routeFailuresSheet = buildRouteFailuresSheet(rows)
-  if (routeFailuresSheet) {
-    XLSX.utils.book_append_sheet(wb, routeFailuresSheet, "Route Failures")
-  }
   // Always last — the chunked-download audit trail ships even when every
   // chunk succeeded, so the bill's provenance lives on the file itself.
   XLSX.utils.book_append_sheet(

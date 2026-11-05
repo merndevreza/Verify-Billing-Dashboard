@@ -45,16 +45,6 @@ export const BILLING_COLUMN_HEADERS = [
   "Attention Needed",
 ] as const
 
-/** Result of one routing call — exact road distance or a flagged estimate. */
-export interface RouteDistanceResult {
-  /** Motorcycle distance in meters (exact road distance, or hybrid estimate). */
-  meters: number
-  /** True when the hybrid estimate was used (endpoint off the road graph). */
-  estimated: boolean
-  /** How the estimate was made (gap, anchor) — empty for exact routes. */
-  note: string
-}
-
 export interface BillingColumns {
   /** Excel serial (date + time), rendered like the other date columns. */
   "Submission Date": number | null
@@ -63,11 +53,14 @@ export interface BillingColumns {
   "TAT Extra": number | null
   "Penalty": number | null
   "Price After Penalty": number | null
-  /** Audit trail: every branch compared for this trip and its road distance. */
+  /**
+   * Audit trail: every branch isochrone containing this trip's end point,
+   * with its category ("Gulshan Branch [in]"), or NO_ISOCHRONE_MATCH.
+   */
   "Compared Branches And Distances": string | null
   /**
-   * Manual-check flag: set when a distance came from the hybrid estimate
-   * (trip end off the mapped road graph) — carries the estimation details.
+   * Manual-check flag (column kept for workbook-format stability; nothing
+   * populates it since classification moved to isochrone containment).
    */
   "Attention Needed": string | null
 }
@@ -81,16 +74,14 @@ export interface BillSummary {
   /** Rows with a final IN/OUT/REMOTE classification and a full bill amount. */
   billed: number
   classification: { in: number; out: number; remote: number }
-  /** Rows marked ROUTE_DISTANCE_UNAVAILABLE — billing columns left empty. */
-  routeUnavailable: number
-  /** Rows with missing/invalid coordinates that needed routing. */
+  /** Rows with missing/invalid coordinates that needed containment. */
   invalidCoordinates: number
   /** Rows classified but with an unparseable Receive/Verification date. */
   tatUnavailable: number
   /**
    * Rows whose original in_out_remote was not IN/OUT/REMOTE, plus claimed-IN
-   * rows rejected by the Dhaka boundary check when no branch dataset exists
-   * to reclassify them with (left unbilled, reason in the audit column).
+   * rows rejected by the Dhaka boundary check when no isochrone dataset
+   * exists to reclassify them with (left unbilled, reason in the audit column).
    */
   unclassified: number
   totalAmount: number

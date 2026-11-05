@@ -6,14 +6,15 @@
 // sla-status report (JSON) from the backend in ≤5-day chunks, one chunk at a
 // time (the backend fails on full-month ranges; lib/billing/chunked-run.ts)
 // → parse the rows → validate IN against the Dhaka city corporation boundary
-// (data/dhaka.geojson) and classify Out/Remote (with GraphHopper
-// road-distance revalidation) → apply rates, TAT and penalties → generate the
-// billing .xlsx (with a "Chunk Details" audit sheet) and return it as a
-// download. Any permanently failed chunk aborts the run with an error naming
-// the chunk — no partial bill.
+// (data/dhaka.geojson) and classify IN/OUT/REMOTE by point-in-isochrone
+// containment against the org's branch isochrones (lib/billing/isochrones.ts)
+// → apply rates, TAT and penalties → generate the billing .xlsx (with a
+// "Chunk Details" audit sheet) and return it as a download. Any permanently
+// failed chunk aborts the run with an error naming the chunk — no partial bill.
 
 import { apiErrorResponse } from "@/lib/api/server"
-import { ROUTER_PROVIDER } from "@/lib/billing/calculate"
+import { loadIsochrones } from "@/lib/billing/isochrones"
+import { isochronesForOrgs } from "@/lib/billing/org-isochrones"
 import {
   MAX_CHUNK_DAYS,
   ChunkFailureError,
@@ -104,9 +105,11 @@ export async function POST(request: Request) {
     // leaves the request behind for audits.
     await saveRunFile(runId, "request.json", JSON.stringify(payload, null, 2))
 
-    // Branch data only applies to orgs with a bundled dataset (Brac Bank
-    // PLC); anything else gets [] and keeps the backend classification.
+    // Branch rules only apply to orgs with a bundled, current isochrone
+    // dataset (Brac Bank PLC); anything else gets [] and keeps the backend
+    // classification.
     const orgBranches = branchesForOrgs(payload.org_id)
+    const orgIsochrones = isochronesForOrgs(payload.org_id)
 
     // 1. Download the sla-status report in ≤MAX_CHUNK_DAYS-day chunks
     //    (Authorization header wins over the session token; both are the same
@@ -120,7 +123,9 @@ export async function POST(request: Request) {
         onParams: () => ({
           rates: payload.rates,
           holidays: payload.holidays ?? [],
-          branches: orgBranches?.branches ?? [],
+          isochrones: orgIsochrones
+            ? loadIsochrones(orgIsochrones.file).isochrones
+            : [],
         }),
       })
     } catch (error) {
@@ -191,7 +196,8 @@ export async function POST(request: Request) {
           branchDatasetOrg: orgBranches?.orgName ?? null,
           // IN validation source: coordinates inside this boundary are IN.
           dhakaBoundary: "data/dhaka.geojson",
-          routingProvider: ROUTER_PROVIDER,
+          // Zone classification source: point-in-isochrone containment.
+          isochroneDataset: orgIsochrones?.file ?? null,
           summary,
         },
         null,
