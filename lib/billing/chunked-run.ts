@@ -333,7 +333,6 @@ export async function runChunkedBilling(
       page: payload.page ?? 1,
       org_id: payload.org_id,
       status: payload.status,
-      action_date_type: payload.action_date_type,
     }
 
     // 1. Download this chunk.

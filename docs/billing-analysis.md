@@ -61,7 +61,7 @@ Request body (JSON):
   "dateTill": "2026-09-01",
   "page": 1,
   "org_id": ["79e1788b-4b40-48d3-ab51-25171779703d"],
-  "action_date_type": "END_DATE"
+  "status": [6, 7, 8]
 }
 ```
 
@@ -175,7 +175,7 @@ penalty computation, and frontend handling of the binary response (currently
 the client `fetch`s JSON and just toasts the row count).
 
 Frontend form (`BillGenerationClient.tsx`) already collects: date range,
-organization, statuses, action_date_type, billingType (`trip` | `file`),
+organization, statuses, billingType (`trip` | `file`),
 weekly + extra holidays, rates, SLA penalties (day1–day4) — all forwarded in
 the payload (`CalculateBillPayload`, `lib/types/billing.ts`).
 

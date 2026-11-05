@@ -59,12 +59,6 @@ function validate(p: Partial<CalculateBillPayload> | null): string | null {
   )
     return "status must be an array of numbers"
   if (
-    p.action_date_type !== undefined &&
-    p.action_date_type !== "START_DATE" &&
-    p.action_date_type !== "END_DATE"
-  )
-    return "action_date_type must be START_DATE or END_DATE"
-  if (
     !p.rates ||
     !isNum(p.rates.inStation) ||
     !isNum(p.rates.outStation) ||

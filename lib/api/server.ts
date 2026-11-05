@@ -38,7 +38,6 @@ export interface TripStatusRequest {
   org_id: string[]
   /** Omitted from the request body when undefined (no status filter). */
   status?: number[]
-  action_date_type?: "START_DATE" | "END_DATE"
 }
 
 /** Result of the backend sla-status report endpoint. */

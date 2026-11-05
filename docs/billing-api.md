@@ -32,11 +32,11 @@ Authorization: Bearer <token>        // same token the backend already knows
 
 - **Required by the API:** `dateFrom`, `dateTill` (ISO `yyyy-mm-dd`), a
   non-empty `org_id` array (org **uuids**), `rates`, `penalties`.
-- **Optional filters:** `status` and `action_date_type` are only added to the
-  payload when the user actually chose them (`if (data.statuses.length > 0)` /
-  `if (data.action_date_type)`). The API works with just org + date range.
-- Required fields are marked `*` in the UI; Status, Sort By, Billing Type and
-  Holidays are optional.
+- **Optional filters:** `status` is only added to the payload when the user
+  actually chose statuses (`if (data.statuses.length > 0)`). The API works
+  with just org + date range.
+- Required fields are marked `*` in the UI; Status, Billing Type and Holidays
+  are optional.
 
 ## Step 1 — The route handler receives the request
 
@@ -59,7 +59,7 @@ POSTs to the backend's sla-status report (`app.config.ts` →
 `Endpoints.BILL.GET_SLA_STATUS`) and returns the JSON payload
 (`{ data: TripStatusRow[], message, status }`). The request body is unchanged
 from the retired trip-status export: `TripStatusRequest` omits
-`status`/`action_date_type` from the JSON body when they are `undefined` —
+`status` from the JSON body when it is `undefined` —
 the backend then runs unfiltered. One response carries all matching rows. The
 request has a 5-minute timeout because exports can be slow. A non-200
 `status` inside the envelope (the backend reports failures inside a 200

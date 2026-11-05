@@ -139,7 +139,6 @@ Request body (all billing parameters come from the form):
   "page": 1,
   "org_id": ["79e1788b-4b40-48d3-ab51-25171779703d"],
   "status": [6, 7, 8],
-  "action_date_type": "END_DATE",
   "billingType": "trip",
   "holidays": ["2026-10-02", "2026-10-03"],
   "rates": { "inStation": 150, "outStation": 200, "remote": 685 },

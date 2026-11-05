@@ -62,7 +62,7 @@ const WEEKDAYS = [
 // forwarded to the sla-status filter, so it must stay 6/7/8.
 const APPLICATION_STATUS_MAP: Record<number, { label: string; value: number }> = {
   1: { label: 'Submitted', value: 6 },
-  2: { label: 'Partially Submitted', value: 7 },
+  // 2: { label: 'Partially Submitted', value: 7 },
   3: { label: 'Withdrawn', value: 8 },
 };
 // Only this organization is billable for now; the rest render disabled.
@@ -76,7 +76,6 @@ const DEFAULT_VALUES: BillFormValues = {
   dateRange: { from: undefined, to: undefined },
   organizationId: ENABLED_ORG_UUID,
   statuses: [6,8],
-  action_date_type: "END_DATE",
   billingType: "trip",
   weeklyHolidays: [5, 6], // Friday + Saturday
   extraHolidays: [],
@@ -192,7 +191,6 @@ export default function BillGenerationClient() {
     }
     // Optional filters — omitted entirely so the backend call runs unfiltered.
     if (data.statuses.length > 0) payload.status = data.statuses
-    if (data.action_date_type) payload.action_date_type = data.action_date_type
 
     const response = await fetch("/api/billing/calculate", {
       method: "POST",
@@ -359,28 +357,6 @@ export default function BillGenerationClient() {
               />
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="action_date_type">Sort By</Label>
-              <Controller
-                control={control}
-                name="action_date_type"
-                render={({ field }) => (
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={[{ value: "START_DATE", label: "Start Date" }, { value: "END_DATE", label: "End Date" }]}
-                  >
-                    <SelectTrigger className="w-full" id="action_date_type">
-                      <SelectValue placeholder="Default" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="START_DATE">Start Date</SelectItem>
-                      <SelectItem value="END_DATE">End Date</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-            </div>
             <div className="grid gap-2">
               <Label htmlFor="billingType">Billing Type</Label>
               <Controller
