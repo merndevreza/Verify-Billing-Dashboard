@@ -105,11 +105,18 @@ export async function POST(request: Request) {
     // leaves the request behind for audits.
     await saveRunFile(runId, "request.json", JSON.stringify(payload, null, 2))
 
-    // Branch rules only apply to orgs with a bundled, current isochrone
-    // dataset (Brac Bank PLC); anything else gets [] and keeps the backend
-    // classification.
+    // Resolve branch isochrones: throws when branch data is missing or
+    // generation fails, returns null when the org is not in the registry.
     const orgBranches = branchesForOrgs(payload.org_id)
-    const orgIsochrones = isochronesForOrgs(payload.org_id)
+    let orgIsochrones
+    try {
+      orgIsochrones = await isochronesForOrgs(payload.org_id)
+    } catch (err) {
+      return Response.json(
+        { success: false, message: err instanceof Error ? err.message : String(err) },
+        { status: 422 }
+      )
+    }
 
     // 1. Download the sla-status report in ≤MAX_CHUNK_DAYS-day chunks
     //    (Authorization header wins over the session token; both are the same
