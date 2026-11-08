@@ -62,8 +62,8 @@ export interface BillingColumns {
   "Price After Penalty": number | null
   /**
    * Audit trail: the boundary/isochrone verdict for this trip's end point —
-   * the city/district boundary hit, every branch isochrone containing it
-   * with its category ("Gulshan Branch [in]"), or NO_ISOCHRONE_MATCH.
+   * the city/district boundary hit, the first branch isochrone containing it
+   * ("Gulshan Branch"), or NO BRANCH MATCH.
    */
   "Compared Branches And Distances": string | null
   /**

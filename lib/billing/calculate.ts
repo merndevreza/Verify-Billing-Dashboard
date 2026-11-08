@@ -1,7 +1,7 @@
 // Core billing engine: classification (Dhaka city corporation boundary → IN;
-// Dhaka district boundary → OUT; branch isochrone containment → OUT, none →
-// REMOTE; branch category ignored), TAT (Rule 4, 5), penalty (Rule 6) and
-// final price
+// Dhaka district boundary or any district sadar sub-district → OUT; branch
+// isochrone containment → OUT, none → REMOTE; branch category ignored), TAT
+// (Rule 4, 5), penalty (Rule 6) and final price
 // (Rule 7). Runs on the parsed trip rows in place — no row copies — and is
 // fully synchronous: every classification is a local point-in-polygon test
 // against the org's branch isochrones (see isochrones.ts), no routing calls.
@@ -12,8 +12,12 @@ import {
   parseCalendarDate,
   parseDateTimeSerial,
 } from "./dates"
-import { isInsideDhakaBoundary, isInsideDhakaDistrict } from "./dhaka-boundary"
-import { findIsochroneMatches, type BranchIsochrone } from "./isochrones"
+import {
+  isInsideDhakaBoundary,
+  isInsideDhakaDistrict,
+  isInsideSadarSubDistrict,
+} from "./dhaka-boundary"
+import { findIsochroneMatch, type BranchIsochrone } from "./isochrones"
 
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
 
@@ -210,18 +214,29 @@ export function processBilling(
       }
     }
 
-    // Step 2 — branch isochrone fallback: IN comes solely from the Dhaka
+    // Step 2 — district sadar test (data/sadar_sub_district.geojson): a
+    // point inside any district's sadar sub-district can never be REMOTE —
+    // it is OUT outright.
+    if (isInsideSadarSubDistrict(lat, lon)) {
+      return {
+        outcome: "OUT",
+        comparison: withPrefix(
+          "coordinates inside a district sadar sub-district boundary"
+        ),
+      }
+    }
+
+    // Step 3 — branch isochrone fallback: IN comes solely from the Dhaka
     // city corporation boundary (step 0), so the branch category plays no
     // part here either. A point outside the district but inside any branch's
     // isochrone (either category) is OUT — within a station's service range;
-    // a point in neither is REMOTE. Every match is listed for the audit.
-    const matches = findIsochroneMatches(params.isochrones, lat, lon)
+    // a point in neither is REMOTE. The scan stops at the first containing
+    // isochrone and only that branch is named in the audit trail.
+    const match = findIsochroneMatch(params.isochrones, lat, lon)
     const audit = withPrefix(
-      matches.length > 0
-        ? matches.map((m) => `${m.branchName} [${m.category}]`).join("; ")
-        : "NO_ISOCHRONE_MATCH"
+      match ? match.branchName : "NO BRANCH MATCH"
     )
-    if (matches.length > 0) {
+    if (match) {
       return { outcome: "OUT", comparison: audit }
     }
     return { outcome: "REMOTE", comparison: audit }

@@ -151,18 +151,17 @@ Decides IN / OUT / REMOTE for one row, in this exact order:
 4. Invalid coordinates → `INVALID_COORDINATES` marker (containment is
    undefined without a point).
 5. **Isochrone containment** (`lib/billing/isochrones.ts` →
-   `findIsochroneMatches`): the trip end point is tested against every branch
-   isochrone of the org's geojson (bounding-box pre-filter, then even-odd
-   ray-cast — no network calls).
-   - inside any **"in"-category** branch's isochrone (Dhaka branches) →
-     `IN` (wins when isochrones overlap);
-   - else inside any **"out"-category** branch's isochrone → `OUT`;
-   - else → `REMOTE` (`NO_ISOCHRONE_MATCH` in the audit column).
+   `findIsochroneMatch`): the trip end point is tested against the branch
+   isochrones of the org's geojson (bounding-box pre-filter, then even-odd
+   ray-cast — no network calls); the scan stops at the first containing
+   isochrone.
+   - inside any branch's isochrone (either category) → `OUT`;
+   - else → `REMOTE` (`NO BRANCH MATCH` in the audit column).
 
-Every containing branch is listed in the audit column as
-`<branch name> [<category>]` (e.g. `Gulshan Branch [in]; Tongi Branch [out]`),
-so each classification is verifiable; a rejected-IN row carries the
-`IN claim rejected: …` prefix ahead of its matches.
+The audit column names the first branch isochrone containing the point
+(`<branch name>`, e.g. `Gulshan Branch`), so each classification is
+verifiable; a rejected-IN row carries the `IN claim rejected: …` prefix
+ahead of its match.
 
 ### 6b. TAT + penalty — `applyBilling(row, zone)`
 

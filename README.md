@@ -69,11 +69,10 @@ Every trip is **revalidated server-side** — the backend's existing `in_out_rem
 | --- | --- |
 | `in_out_remote` value is not IN/OUT/REMOTE | Left as-is; billing columns left empty (unclassified). |
 | Coordinates inside the **Dhaka city corporation boundary** (`data/dhaka_city_corporation.geojson`) | `IN` — regardless of what the backend claimed. A claimed-`IN` trip outside the boundary is rejected (audited) and reclassified by the rules below. |
-| Trip end point inside any **"in"-category** branch's isochrone (Dhaka branches) | `IN` — wins when isochrones overlap. |
-| Trip end point inside any **"out"-category** branch's isochrone | `OUT`. |
-| Trip end point inside no branch isochrone | `REMOTE` (`NO_ISOCHRONE_MATCH` in the audit column). |
+| Trip end point inside any branch's isochrone (either category) | `OUT` — the scan stops at the first containing branch. |
+| Trip end point inside no branch isochrone | `REMOTE` (`NO BRANCH MATCH` in the audit column). |
 
-Every containing branch is listed in the audit column as `<branch name> [<category>]`, so each classification is verifiable.
+The audit column names the first branch isochrone containing the point (`<branch name>`), so each classification is verifiable.
 
 **Failure handling** — missing data must never become a guessed classification:
 
@@ -111,11 +110,9 @@ The audit column makes every classification verifiable:
 
 | Content | Meaning |
 | --- | --- |
-| `Gulshan Branch [in]` | Point inside that Dhaka branch's isochrone → IN. |
-| `Gulshan Branch [in]; Tongi Branch [out]` | Overlapping isochrones — all containing branches listed; IN wins. |
-| `Tongi Branch [out]` | Point inside an upcountry branch's isochrone → OUT. |
-| `NO_ISOCHRONE_MATCH` | Point in no branch isochrone → REMOTE. |
-| `IN claim rejected: coordinates outside the Dhaka city corporation boundary; Tongi Branch [out]` | Claimed-IN trip reclassified by containment after failing the boundary test. |
+| `Gulshan Branch` | Point inside that branch's isochrone → OUT. |
+| `NO BRANCH MATCH` | Point in no branch isochrone → REMOTE. |
+| `IN claim rejected: coordinates outside the Dhaka city corporation boundary; Tongi Branch` | Claimed-IN trip reclassified by containment after failing the boundary test. |
 | empty | No containment happened (IN via Dhaka boundary, invalid coordinates, unclassified). |
 
 ### Performance

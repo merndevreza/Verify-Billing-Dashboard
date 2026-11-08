@@ -1,9 +1,10 @@
-// Dhaka boundary polygons (data/*.geojson) — sources of truth for the zone
-// tests: a trip whose coordinates fall inside the city corporation polygon is
-// IN no matter what the backend claimed, and inside the (larger) district
-// polygon is OUT before the branch-isochrone fallback even runs. Each file is
-// read from disk once per process and cached (same cwd idiom as storage.ts),
-// so a replaced boundary file is picked up on server restart without a rebuild.
+// Zone boundary polygons (data/*.geojson) — sources of truth for the zone
+// tests: inside the Dhaka city corporation polygon is IN no matter what the
+// backend claimed, inside the Dhaka district polygon is OUT, inside any
+// district sadar sub-district is OUT, and only after all three does the
+// branch-isochrone fallback run. Each file is read from disk once per
+// process and cached (same cwd idiom as storage.ts), so a replaced boundary
+// file is picked up on server restart without a rebuild.
 
 import { readFileSync } from "node:fs"
 import path from "node:path"
@@ -82,4 +83,12 @@ export function isInsideDhakaBoundary(lat: number, lon: number): boolean {
 /** True when (lat, lon) falls inside the Dhaka district boundary. */
 export function isInsideDhakaDistrict(lat: number, lon: number): boolean {
   return insideFile("dhaka_district.geojson", lat, lon)
+}
+
+/**
+ * True when (lat, lon) falls inside any district sadar sub-district
+ * (data/sadar_sub_district.geojson) — sadar trips can never be REMOTE.
+ */
+export function isInsideSadarSubDistrict(lat: number, lon: number): boolean {
+  return insideFile("sadar_sub_district.geojson", lat, lon)
 }

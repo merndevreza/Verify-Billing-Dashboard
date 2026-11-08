@@ -2,8 +2,8 @@
 // truth for the OUT/REMOTE fallback: after the city corporation (IN) and
 // district (OUT) boundary tests, a trip end point inside any branch's
 // isochrone (either category) is OUT, and inside none is REMOTE. The branch
-// category is carried only for the audit trail (see classify in
-// calculate.ts). Each file is read
+// category ("in"/"out") only gates which features load; it never reaches the
+// verdict or the audit trail. Each file is read
 // from disk once per process and cached (same cwd idiom as dhaka-boundary.ts),
 // so a regenerated file is picked up on server restart without a rebuild —
 // the 3 MB file is never bundled via a static import.
@@ -27,10 +27,9 @@ export interface BranchIsochrone {
   bounds: PolygonBounds
 }
 
-/** A containment hit for one point: which branch's isochrone, which category. */
+/** A containment hit for one point: the branch whose isochrone contains it. */
 export interface IsochroneMatch {
   branchName: string
-  category: "in" | "out"
 }
 
 interface IsochroneDataset {
@@ -114,23 +113,21 @@ export function loadIsochrones(file: string): IsochroneDataset {
 }
 
 /**
- * All branch isochrones containing (lat, lon) — bounding-box pre-filter, then
- * ray-cast. No early exit: every match is reported for the audit trail.
+ * The first branch isochrone containing (lat, lon), or null — bounding-box
+ * pre-filter, then ray-cast. Returns as soon as one isochrone contains the
+ * point: the verdict only needs one match (OUT), and the audit trail names
+ * that branch alone instead of listing every containing branch.
  */
-export function findIsochroneMatches(
+export function findIsochroneMatch(
   isochrones: BranchIsochrone[],
   lat: number,
   lon: number
-): IsochroneMatch[] {
-  const matches: IsochroneMatch[] = []
+): IsochroneMatch | null {
   for (const isochrone of isochrones) {
     if (!boundsContain(isochrone.bounds, lon, lat)) continue
     if (pointInPolygon(lon, lat, isochrone.rings)) {
-      matches.push({
-        branchName: isochrone.branchName,
-        category: isochrone.category,
-      })
+      return { branchName: isochrone.branchName }
     }
   }
-  return matches
+  return null
 }
