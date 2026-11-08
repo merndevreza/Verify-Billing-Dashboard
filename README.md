@@ -68,7 +68,7 @@ Every trip is **revalidated server-side** — the backend's existing `in_out_rem
 | Rule | Result |
 | --- | --- |
 | `in_out_remote` value is not IN/OUT/REMOTE | Left as-is; billing columns left empty (unclassified). |
-| Coordinates inside the **Dhaka city corporation boundary** (`data/dhaka.geojson`) | `IN` — regardless of what the backend claimed. A claimed-`IN` trip outside the boundary is rejected (audited) and reclassified by the rules below. |
+| Coordinates inside the **Dhaka city corporation boundary** (`data/dhaka_city_corporation.geojson`) | `IN` — regardless of what the backend claimed. A claimed-`IN` trip outside the boundary is rejected (audited) and reclassified by the rules below. |
 | Trip end point inside any **"in"-category** branch's isochrone (Dhaka branches) | `IN` — wins when isochrones overlap. |
 | Trip end point inside any **"out"-category** branch's isochrone | `OUT`. |
 | Trip end point inside no branch isochrone | `REMOTE` (`NO_ISOCHRONE_MATCH` in the audit column). |
@@ -163,7 +163,7 @@ New billing APIs (server-side logic):
               Verify backend
 
   Classification data (local files, no network at billing time):
-    data/dhaka.geojson + data/brac_branches_isochrones.geojson (via data/org_registry.json)
+    data/dhaka_city_corporation.geojson + data/brac_branches_isochrones.geojson (via data/org_registry.json)
 ```
 
 - **Auth** — `auth.config.ts` / `auth.ts` / `proxy.ts`, login page at `app/login`, session carries `accessToken`, `user`, `permissions`, `vendor_id`. Next 16 proxy convention (`proxy.ts`) replaces v3's deprecated `middleware.ts`.
@@ -192,7 +192,7 @@ data/
 ├── brac_branches.json                 # BRAC branches: name, lat/lon, district,
 │                                      #   max_distance_km (serving radius), category in/out
 ├── brac_branches_isochrones.geojson   # one Polygon per branch, category in/out (generated)
-└── dhaka.geojson                      # Dhaka city corporation boundary (IN test)
+└── dhaka_city_corporation.geojson                      # Dhaka city corporation boundary (IN test)
 lib/
 ├── api/{client,server,fetcher}.ts    # two-layer API (client → backend / routes → backend)
 ├── auth/clientAuth.tsx               # useAuth() hook (user, token, logout)

@@ -28,7 +28,7 @@
 //
 // Output: GeoJSON FeatureCollection — one Polygon feature per branch with the
 // branch metadata as properties, written to the dashboard's data/ dir so it
-// can be consumed the same way as data/dhaka.geojson.
+// can be consumed the same way as data/dhaka_city_corporation.geojson.
 
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";

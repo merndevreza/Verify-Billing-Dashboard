@@ -6,7 +6,7 @@
 // sla-status report (JSON) from the backend in ≤5-day chunks, one chunk at a
 // time (the backend fails on full-month ranges; lib/billing/chunked-run.ts)
 // → parse the rows → validate IN against the Dhaka city corporation boundary
-// (data/dhaka.geojson) and classify IN/OUT/REMOTE by point-in-isochrone
+// (data/dhaka_city_corporation.geojson) and classify IN/OUT/REMOTE by point-in-isochrone
 // containment against the org's branch isochrones (lib/billing/isochrones.ts)
 // → apply rates, TAT and penalties → generate the billing .xlsx (with a
 // "Chunk Details" audit sheet) and return it as a download. Any permanently
@@ -211,7 +211,7 @@ export async function POST(request: Request) {
           // Which org's branch rules were applied (null = backend verdicts kept).
           branchDatasetOrg: orgBranches?.orgName ?? null,
           // IN validation source: coordinates inside this boundary are IN.
-          dhakaBoundary: "data/dhaka.geojson",
+          dhakaBoundary: "data/dhaka_city_corporation.geojson",
           // Zone classification source: point-in-isochrone containment.
           isochroneDataset: orgIsochrones?.file ?? null,
           summary,

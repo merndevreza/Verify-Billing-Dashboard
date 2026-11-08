@@ -1,4 +1,4 @@
-// Dhaka city corporation boundary (data/dhaka.geojson) — the source of truth
+// Dhaka city corporation boundary (data/dhaka_city_corporation.geojson) — the source of truth
 // for the IN-station test: a trip whose coordinates fall inside this polygon
 // is IN no matter what the backend claimed. The file is read from disk once
 // per process and cached (same cwd idiom as storage.ts), so a replaced
@@ -24,7 +24,7 @@ let cache: BoundaryPolygon[] | null = null
 function loadBoundary(): BoundaryPolygon[] {
   if (cache) return cache
   const file = JSON.parse(
-    readFileSync(path.join(process.cwd(), "data", "dhaka.geojson"), "utf8")
+    readFileSync(path.join(process.cwd(), "data", "dhaka_city_corporation.geojson"), "utf8")
   ) as {
     features?: {
       geometry?: { type?: string; coordinates?: unknown }
@@ -56,7 +56,7 @@ function loadBoundary(): BoundaryPolygon[] {
   }
 
   if (polygons.length === 0) {
-    throw new Error("data/dhaka.geojson contains no polygon geometries")
+    throw new Error("data/dhaka_city_corporation.geojson contains no polygon geometries")
   }
   cache = polygons
   return polygons

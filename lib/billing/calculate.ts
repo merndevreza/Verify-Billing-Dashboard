@@ -81,7 +81,7 @@ export function processBilling(
     }
 
     // Step 0 — IN validation against the Dhaka city corporation boundary
-    // (data/dhaka.geojson). Coordinates inside the boundary are IN no matter
+    // (data/dhaka_city_corporation.geojson). Coordinates inside the boundary are IN no matter
     // what the backend claimed; a claimed-IN row that fails the boundary
     // test is rejected and continues through the isochrone steps below like
     // any other non-IN row.
