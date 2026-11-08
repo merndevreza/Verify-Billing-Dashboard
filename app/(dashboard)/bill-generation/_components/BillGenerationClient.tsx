@@ -106,9 +106,13 @@ export default function BillGenerationClient() {
     formState: { errors, isSubmitting },
   } = useForm<BillFormValues>({ defaultValues: DEFAULT_VALUES })
   const [isFinishing, setIsFinishing] = useState(false)
-  // Reveals the ✕ remove buttons on auto-detected holiday chips (UI-only;
-  // removing still unchecks that weekday).
+  // Reveals the ✕ remove buttons on auto-detected holiday chips.
   const [allowHolidayRemoval, setAllowHolidayRemoval] = useState(false)
+  // Auto-detected holiday dates removed chip-by-chip — excludes a single
+  // date without unchecking the whole weekday.
+  const [removedWeeklyHolidayDates, setRemovedWeeklyHolidayDates] = useState<
+    string[]
+  >([])
 
   useEffect(() => {
     if (token && !user?.organizations?.length) dispatch(fetchOrganizations(token))
@@ -121,7 +125,8 @@ export default function BillGenerationClient() {
   const confirmed = watch("confirmed")
 
   // Dates from (period start − 30 days) through period end that fall on
-  // weekly holidays — the bill's lookback window.
+  // weekly holidays — the bill's lookback window, minus dates removed
+  // chip-by-chip.
   const weeklyHolidayDates = useMemo(() => {
     if (!dateRange?.from || !dateRange?.to) return []
     return eachDateInRange({
@@ -130,13 +135,19 @@ export default function BillGenerationClient() {
     })
       .filter((d) => weeklyHolidays.includes(d.getDay()))
       .map(toISODate)
-  }, [dateRange, weeklyHolidays])
+      .filter((iso) => !removedWeeklyHolidayDates.includes(iso))
+  }, [dateRange, weeklyHolidays, removedWeeklyHolidayDates])
 
   function toggleWeeklyHoliday(day: number, checked: boolean) {
     const current = weeklyHolidays
     setValue(
       "weeklyHolidays",
       checked ? [...current, day] : current.filter((d) => d !== day)
+    )
+    // Touching a weekday checkbox resets its chip removals — otherwise a
+    // removal would survive uncheck → re-check of the weekday.
+    setRemovedWeeklyHolidayDates((prev) =>
+      prev.filter((iso) => new Date(`${iso}T00:00:00`).getDay() !== day)
     )
   }
 
@@ -169,12 +180,11 @@ export default function BillGenerationClient() {
     )
   }
 
+  // Excludes one auto-detected date without touching the weekday checkboxes —
+  // other dates on the same weekday stay holidays.
   function removeWeeklyHolidayDate(iso: string) {
-    // Find which weekday this date is and uncheck it
-    const day = new Date(`${iso}T00:00:00`).getDay()
-    setValue(
-      "weeklyHolidays",
-      weeklyHolidays.filter((d) => d !== day)
+    setRemovedWeeklyHolidayDates((prev) =>
+      prev.includes(iso) ? prev : [...prev, iso]
     )
   }
 

@@ -131,7 +131,7 @@ export default function DateRangeField({
               mode="range"
               selected={value}
               onSelect={(range) => onChange(range ?? { from: undefined, to: undefined })}
-              numberOfMonths={2}
+              numberOfMonths={1}
               max={MAX_RANGE_DAYS - 1}
               disabled={disabled}
             />
