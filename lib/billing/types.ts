@@ -27,7 +27,7 @@ export interface TripStatusRow {
   Thana: string
   in_out_remote: string
   ApplicationStatus: string
-  api_submission_time: string | number
+  SubmissionDateTime: string | number
 }
 
 /**
@@ -78,6 +78,12 @@ export interface BillSummary {
   invalidCoordinates: number
   /** Rows classified but with an unparseable Receive/Verification date. */
   tatUnavailable: number
+  /**
+   * Rows delivered with a null SubmissionDateTime: the calculation is
+   * skipped entirely for them (left unbilled, backend classification
+   * untouched) since TAT is not computable.
+   */
+  submissionMissing: number
   /**
    * Rows whose original in_out_remote was not IN/OUT/REMOTE, plus claimed-IN
    * rows rejected by the Dhaka boundary check when no isochrone dataset

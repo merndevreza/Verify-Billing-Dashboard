@@ -15,12 +15,12 @@ export const REQUIRED_COLUMNS = [
   "District",
   "Address",
   "in_out_remote",
-  "api_submission_time",
+  "SubmissionDateTime",
 ] as const
 
 /**
  * Column order for the parsed rows (matches the retired xls export). The
- * report reorders the date columns and drops api_submission_time — see
+ * report reorders the date columns and drops SubmissionDateTime — see
  * DATE_COLUMNS in report.ts.
  */
 export const TRIP_STATUS_COLUMNS = [
@@ -53,7 +53,7 @@ export const TRIP_STATUS_COLUMNS = [
   "ApplicationStatus",
   // Kept on the row for the TAT calculation only — never shown in the
   // report; its data appears as the "Submission Date" column instead.
-  "api_submission_time",
+  "SubmissionDateTime",
 ] as const
 
 export interface ParsedTripFile {

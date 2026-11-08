@@ -281,6 +281,7 @@ function buildSummarySheet(
     ["Not Billed"],
     ["Invalid coordinates", summary.invalidCoordinates],
     ["TAT unavailable", summary.tatUnavailable],
+    ["Null SubmissionDateTime (skipped)", summary.submissionMissing],
     ["Unclassified", summary.unclassified],
     [],
     ["Penalties by TAT Extra"],
@@ -297,13 +298,13 @@ function buildSummarySheet(
     ),
   ]
   const ws = XLSX.utils.aoa_to_sheet(aoa)
-  ws["!cols"] = [{ wch: 30 }, { wch: 10 }, { wch: 10 }, { wch: 15 }, { wch: 19 }]
+  ws["!cols"] = [{ wch: 34 }, { wch: 10 }, { wch: 10 }, { wch: 15 }, { wch: 19 }]
   return ws
 }
 
 /**
  * The three date columns, side by side in this exact order, placed
- * immediately before in_out_remote. api_submission_time is dropped from the
+ * immediately before in_out_remote. SubmissionDateTime is dropped from the
  * report — its data lives on as the Submission Date column.
  */
 const DATE_COLUMNS = [
@@ -360,7 +361,7 @@ async function highlightAttentionRows(buffer: Buffer): Promise<Buffer> {
 /**
  * Build the generated billing report: the original columns with the three
  * date columns side by side immediately before in_out_remote (and
- * api_submission_time dropped), plus the billing columns (ending in
+ * SubmissionDateTime dropped), plus the billing columns (ending in
  * "Attention Needed"), a "Billing Summary" sheet in front, and the audit
  * sheets ("Request Details", "Chunk Details") behind. Numeric
  * billing values are written as numbers; empty ones are skipped so the cells
@@ -382,7 +383,7 @@ export async function buildBillingWorkbook(
   let datesPlaced = false
   for (const name of baseHeaders) {
     // Backend's raw submission column — superseded by "Submission Date".
-    if (name === "api_submission_time") continue
+    if (name === "SubmissionDateTime") continue
     if (DATE_COLUMNS.includes(name as (typeof DATE_COLUMNS)[number])) continue
     if (name === "in_out_remote" && !datesPlaced) {
       header.push(...DATE_COLUMNS)
@@ -393,8 +394,8 @@ export async function buildBillingWorkbook(
   if (!datesPlaced) header.push(...DATE_COLUMNS)
   header.push(...BILLING_COLUMN_HEADERS)
   // json_to_sheet appends any row key missing from header as a trailing
-  // column, so api_submission_time must be stripped from the rows too.
-  const reportRows = rows.map(({ api_submission_time: _raw, ...rest }) => rest)
+  // column, so SubmissionDateTime must be stripped from the rows too.
+  const reportRows = rows.map(({ SubmissionDateTime: _raw, ...rest }) => rest)
   const ws = XLSX.utils.json_to_sheet(reportRows, { header })
   const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1")
 

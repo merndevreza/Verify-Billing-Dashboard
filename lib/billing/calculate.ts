@@ -57,6 +57,7 @@ export function processBilling(
     classification: { in: 0, out: 0, remote: 0 },
     invalidCoordinates: 0,
     tatUnavailable: 0,
+    submissionMissing: 0,
     unclassified: 0,
     totalAmount: 0,
   }
@@ -179,7 +180,7 @@ export function processBilling(
     // Submission Date keeps the backend's date + time (the same Excel serial
     // form as the other date columns); the TAT count uses the calendar date
     // only. Set before the TAT checks so it also shows on tatUnavailable rows.
-    const submission = parseDateTimeSerial(row["api_submission_time"])
+    const submission = parseDateTimeSerial(row["SubmissionDateTime"])
     row["Submission Date"] = submission
     const receiveISO = parseCalendarDate(row["Receive Date"])
     const submissionISO = submission === null ? null : parseCalendarDate(submission)
@@ -214,6 +215,15 @@ export function processBilling(
     billingRow["Price After Penalty"] = null
     billingRow["Compared Branches And Distances"] = null
     billingRow["Attention Needed"] = null
+
+    // A null SubmissionDateTime means the backend never recorded a
+    // submission: TAT (and therefore billing) is not computable. Skip the
+    // whole calculation — the row stays unbilled with the backend's
+    // classification untouched — and surface the count on the summary sheet.
+    if (String(row.SubmissionDateTime ?? "").trim() === "") {
+      summary.submissionMissing++
+      return
+    }
 
     const { outcome: zone, comparison } = classify(row)
     billingRow["Compared Branches And Distances"] = comparison

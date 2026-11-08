@@ -151,6 +151,7 @@ export function mergeSummaries(summaries: BillSummary[]): BillSummary {
     classification: { in: 0, out: 0, remote: 0 },
     invalidCoordinates: 0,
     tatUnavailable: 0,
+    submissionMissing: 0,
     unclassified: 0,
     totalAmount: 0,
   }
@@ -162,6 +163,7 @@ export function mergeSummaries(summaries: BillSummary[]): BillSummary {
     merged.classification.remote += s.classification.remote
     merged.invalidCoordinates += s.invalidCoordinates
     merged.tatUnavailable += s.tatUnavailable
+    merged.submissionMissing += s.submissionMissing
     merged.unclassified += s.unclassified
     merged.totalAmount += s.totalAmount
   }
