@@ -1,7 +1,9 @@
 // Branch isochrones (data/<org>_branches_isochrones.geojson) — the source of
-// truth for the zone test: a trip end point inside an "in"-category branch's
-// isochrone is IN, inside an "out"-category branch's isochrone is OUT, and
-// inside none is REMOTE (see classify in calculate.ts). Each file is read
+// truth for the OUT/REMOTE test: a trip end point inside any branch's
+// isochrone (either category) is OUT, and inside none is REMOTE. IN comes
+// solely from the Dhaka city corporation boundary (dhaka-boundary.ts) — the
+// branch category is carried only for the audit trail (see classify in
+// calculate.ts). Each file is read
 // from disk once per process and cached (same cwd idiom as dhaka-boundary.ts),
 // so a regenerated file is picked up on server restart without a rebuild —
 // the 3 MB file is never bundled via a static import.

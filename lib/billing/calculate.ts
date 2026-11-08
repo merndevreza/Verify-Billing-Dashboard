@@ -1,5 +1,6 @@
-// Core billing engine: classification (Dhaka boundary validation + branch
-// isochrone containment), TAT (Rule 4, 5), penalty (Rule 6) and final price
+// Core billing engine: classification (Dhaka city corporation boundary → IN;
+// branch isochrone containment → OUT/REMOTE, category ignored), TAT
+// (Rule 4, 5), penalty (Rule 6) and final price
 // (Rule 7). Runs on the parsed trip rows in place — no row copies — and is
 // fully synchronous: every classification is a local point-in-polygon test
 // against the org's branch isochrones (see isochrones.ts), no routing calls.
@@ -81,11 +82,11 @@ export function processBilling(
       return { outcome: null, comparison: null }
     }
 
-    // Step 0 — IN validation against the Dhaka city corporation boundary
-    // (data/dhaka_city_corporation.geojson). Coordinates inside the boundary are IN no matter
-    // what the backend claimed; a claimed-IN row that fails the boundary
-    // test is rejected and continues through the isochrone steps below like
-    // any other non-IN row.
+    // Step 0 — the IN test against the Dhaka city corporation boundary
+    // (data/dhaka_city_corporation.geojson). Coordinates inside the boundary
+    // are IN no matter what the backend claimed; a claimed-IN row that fails
+    // the boundary test is rejected and continues through the isochrone
+    // steps below, which can only produce OUT or REMOTE.
     const lat = toCoord(row.Latitude)
     const lon = toCoord(row.Longitude)
     const coordsValid =
@@ -148,20 +149,18 @@ export function processBilling(
       return { outcome: INVALID_COORDINATES_MARKER, comparison: auditPrefix }
     }
 
-    // Containment against the branch isochrones: IN when the point falls in
-    // any "in"-category branch's isochrone (Dhaka stations), OUT when it
-    // falls in any "out"-category branch's isochrone, REMOTE when it falls
-    // in none. IN wins on overlap; every match is listed for the audit.
+    // Containment against the branch isochrones: IN comes solely from the
+    // Dhaka city corporation boundary (step 0) — the branch category plays
+    // no part in it. A point inside any branch's isochrone (either category)
+    // is OUT — within a station's service range but outside the city; a
+    // point in none is REMOTE. Every match is listed for the audit.
     const matches = findIsochroneMatches(params.isochrones, lat, lon)
     const audit = withPrefix(
       matches.length > 0
         ? matches.map((m) => `${m.branchName} [${m.category}]`).join("; ")
         : "NO_ISOCHRONE_MATCH"
     )
-    if (matches.some((m) => m.category === "in")) {
-      return { outcome: "IN", comparison: audit }
-    }
-    if (matches.some((m) => m.category === "out")) {
+    if (matches.length > 0) {
       return { outcome: "OUT", comparison: audit }
     }
     return { outcome: "REMOTE", comparison: audit }
