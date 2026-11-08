@@ -46,6 +46,13 @@ export const BILLING_COLUMN_HEADERS = [
 ] as const
 
 export interface BillingColumns {
+  /**
+   * Billable verdict derived from the verification outcome: "Yes" when the
+   * row bills, null when it does not (those rows get "Attention Needed"
+   * instead). The report places this column right after
+   * "AddressApproachStatus".
+   */
+  "isBill": "Yes" | null
   /** Excel serial (date + time), rendered like the other date columns. */
   "Submission Date": number | null
   "Rate": number | null
@@ -60,8 +67,9 @@ export interface BillingColumns {
    */
   "Compared Branches And Distances": string | null
   /**
-   * Manual-check flag (column kept for workbook-format stability; nothing
-   * populates it since classification moved to isochrone containment).
+   * Manual-check flag: "Yes" on rows whose billable verdict comes from a
+   * Comments override (see billingFlag in calculate.ts) — the report
+   * highlights those rows yellow.
    */
   "Attention Needed": string | null
 }

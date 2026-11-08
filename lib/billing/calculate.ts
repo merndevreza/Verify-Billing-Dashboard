@@ -48,6 +48,53 @@ function toCoord(value: unknown): number {
   return typeof value === "number" ? value : Number(String(value ?? "").trim())
 }
 
+/** Comment codes that make an otherwise non-billable outcome billable. */
+const COMMENT_OVERRIDE_CODES = ["df0044", "df009"]
+
+/**
+ * isBill verdict from the verification outcome alone — independent of the
+ * TAT math. "Address Found" bills outright; "Not Approached" (with a
+ * Successful verification) bills only via a Comments override ("N/A" or an
+ * override code), as does "Nearest Area Searched but Address Not Found"
+ * (override codes only). Everything else stays unbilled (isBill null) and
+ * is flagged "Attention Needed" so the report highlights it for manual
+ * review — alongside every Comments-based verdict above.
+ */
+function billingFlag(row: TripStatusRow): {
+  isBill: "Yes" | null
+  attentionNeeded: string | null
+} {
+  // Collapse whitespace runs so backend variants like "Nearest  Area"
+  // (double space) still match the rule text.
+  const approach = String(row.AddressApproachStatus ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+  const verification = String(row.VerificationStatus ?? "").trim()
+  const comments = String(row.Comments ?? "").toLowerCase()
+  const commentsContain = (needle: string) =>
+    comments.includes(needle.toLowerCase())
+
+  if (approach === "Address Found") {
+    return { isBill: "Yes", attentionNeeded: null }
+  }
+  if (
+    approach === "Not Approached" &&
+    verification === "Successful" &&
+    (commentsContain("N/A") ||
+      COMMENT_OVERRIDE_CODES.some((code) => commentsContain(code)))
+  ) {
+    return { isBill: "Yes", attentionNeeded: "Yes" }
+  }
+  if (
+    approach === "Nearest Area Searched but Address Not Found" &&
+    COMMENT_OVERRIDE_CODES.some((code) => commentsContain(code))
+  ) {
+    return { isBill: "Yes", attentionNeeded: "Yes" }
+  }
+  // Everything else: unbilled, flagged for manual review (highlighted).
+  return { isBill: null, attentionNeeded: "Yes" }
+}
+
 export function processBilling(
   rows: TripStatusRow[],
   params: BillingParams
@@ -227,7 +274,13 @@ export function processBilling(
     billingRow["Penalty"] = null
     billingRow["Price After Penalty"] = null
     billingRow["Compared Branches And Distances"] = null
-    billingRow["Attention Needed"] = null
+
+    // isBill and the attention flag are properties of the verification
+    // outcome alone — set on every row, including the skipped/unbilled
+    // paths below.
+    const { isBill, attentionNeeded } = billingFlag(row)
+    billingRow["isBill"] = isBill
+    billingRow["Attention Needed"] = attentionNeeded
 
     // A null SubmissionDateTime means the backend never recorded a
     // submission: TAT (and therefore billing) is not computable. Skip the
