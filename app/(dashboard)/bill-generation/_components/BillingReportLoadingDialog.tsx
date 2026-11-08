@@ -4,10 +4,10 @@ import * as React from "react"
 
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 
-// Estimate ≈ 15 s of processing per selected billing day; if the run isn't
+// Estimate ≈ 12 s of processing per selected billing day; if the run isn't
 // done by then the estimate is extended by 30 s so the countdown never sits
 // at 00:00 mid-run.
-const SECONDS_PER_DAY = 15
+const SECONDS_PER_DAY = 12
 const EXTENSION_SECONDS = 30
 // Bar never reaches 100% while running — only the done phase fills it.
 const MAX_DISPLAYED_PROGRESS = 95
@@ -119,7 +119,7 @@ export function BillingReportLoadingDialog({
 }: {
   open: boolean
   phase?: "running" | "done"
-  /** Selected billing days — the time estimate is ~15 s per day. */
+  /** Selected billing days — the time estimate is ~12 s per day. */
   days?: number
 }) {
   const done = phase === "done"
