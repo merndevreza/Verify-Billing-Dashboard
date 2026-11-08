@@ -1,8 +1,8 @@
 // Branch isochrones (data/<org>_branches_isochrones.geojson) — the source of
-// truth for the OUT/REMOTE test: a trip end point inside any branch's
-// isochrone (either category) is OUT, and inside none is REMOTE. IN comes
-// solely from the Dhaka city corporation boundary (dhaka-boundary.ts) — the
-// branch category is carried only for the audit trail (see classify in
+// truth for the OUT/REMOTE fallback: after the city corporation (IN) and
+// district (OUT) boundary tests, a trip end point inside any branch's
+// isochrone (either category) is OUT, and inside none is REMOTE. The branch
+// category is carried only for the audit trail (see classify in
 // calculate.ts). Each file is read
 // from disk once per process and cached (same cwd idiom as dhaka-boundary.ts),
 // so a regenerated file is picked up on server restart without a rebuild —

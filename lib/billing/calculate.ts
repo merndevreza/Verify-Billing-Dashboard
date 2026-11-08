@@ -1,6 +1,7 @@
 // Core billing engine: classification (Dhaka city corporation boundary → IN;
-// branch isochrone containment → OUT/REMOTE, category ignored), TAT
-// (Rule 4, 5), penalty (Rule 6) and final price
+// Dhaka district boundary → OUT; branch isochrone containment → OUT, none →
+// REMOTE; branch category ignored), TAT (Rule 4, 5), penalty (Rule 6) and
+// final price
 // (Rule 7). Runs on the parsed trip rows in place — no row copies — and is
 // fully synchronous: every classification is a local point-in-polygon test
 // against the org's branch isochrones (see isochrones.ts), no routing calls.
@@ -11,7 +12,7 @@ import {
   parseCalendarDate,
   parseDateTimeSerial,
 } from "./dates"
-import { isInsideDhakaBoundary } from "./dhaka-boundary"
+import { isInsideDhakaBoundary, isInsideDhakaDistrict } from "./dhaka-boundary"
 import { findIsochroneMatches, type BranchIsochrone } from "./isochrones"
 
 import type { BillSummary, BillingRow, TripStatusRow } from "./types"
@@ -149,11 +150,24 @@ export function processBilling(
       return { outcome: INVALID_COORDINATES_MARKER, comparison: auditPrefix }
     }
 
-    // Containment against the branch isochrones: IN comes solely from the
-    // Dhaka city corporation boundary (step 0) — the branch category plays
-    // no part in it. A point inside any branch's isochrone (either category)
-    // is OUT — within a station's service range but outside the city; a
-    // point in none is REMOTE. Every match is listed for the audit.
+    // Step 1 — Dhaka district test (data/dhaka_district.geojson): a point
+    // inside the district but outside the city corporation (IN cases were
+    // already decided in step 0) is OUT outright — no branch isochrone
+    // needed.
+    if (isInsideDhakaDistrict(lat, lon)) {
+      return {
+        outcome: "OUT",
+        comparison: withPrefix(
+          "coordinates inside the Dhaka district boundary"
+        ),
+      }
+    }
+
+    // Step 2 — branch isochrone fallback: IN comes solely from the Dhaka
+    // city corporation boundary (step 0), so the branch category plays no
+    // part here either. A point outside the district but inside any branch's
+    // isochrone (either category) is OUT — within a station's service range;
+    // a point in neither is REMOTE. Every match is listed for the audit.
     const matches = findIsochroneMatches(params.isochrones, lat, lon)
     const audit = withPrefix(
       matches.length > 0
