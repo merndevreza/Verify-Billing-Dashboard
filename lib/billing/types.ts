@@ -48,11 +48,13 @@ export const BILLING_COLUMN_HEADERS = [
 export interface BillingColumns {
   /**
    * Billable verdict derived from the verification outcome: "Yes" when the
-   * row bills, null when it does not (those rows get "Attention Needed"
-   * instead). The report places this column right after
-   * "AddressApproachStatus".
+   * row bills, "No" when the outcome itself decides against billing
+   * ("Not Approached" + Unsuccessful verification, or "Nearest Area
+   * Searched but Address Not Found" without a Comments override code), null
+   * when the outcome alone cannot decide. The report places this column
+   * right after "AddressApproachStatus".
    */
-  "isBill": "Yes" | null
+  "isBillable": "Yes" | "No" | null
   /** Excel serial (date + time), rendered like the other date columns. */
   "Submission Date": number | null
   "Rate": number | null

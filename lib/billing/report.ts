@@ -367,10 +367,11 @@ async function highlightAttentionRows(buffer: Buffer): Promise<Buffer> {
  * billing values are written as numbers; empty ones are skipped so the cells
  * stay blank. The three date columns get the same number format (the one
  * detected in the source file, or the export's default) so they render
- * identically. A grand-total row is appended under the data, with the isBill
+ * identically. A grand-total row is appended under the data, with the isBillable
  * verdict filed directly after AddressApproachStatus. Rows flagged in
- * "Attention Needed" (a Comments-override billable verdict — see billingFlag
- * in calculate.ts) are highlighted yellow.
+ * "Attention Needed" (a blank AddressApproachStatus, or a Comments-override
+ * billable verdict under "Not Approached" — see billingFlag in
+ * calculate.ts) are highlighted yellow.
  */
 export async function buildBillingWorkbook(
   rows: BillingRow[],
@@ -390,9 +391,9 @@ export async function buildBillingWorkbook(
       datesPlaced = true
     }
     header.push(name)
-    // The isBill verdict is filed directly after the outcome it derives
+    // The isBillable verdict is filed directly after the outcome it derives
     // from, not with the appended billing columns at the end.
-    if (name === "AddressApproachStatus") header.push("isBill")
+    if (name === "AddressApproachStatus") header.push("isBillable")
   }
   if (!datesPlaced) header.push(...DATE_COLUMNS)
   header.push(...BILLING_COLUMN_HEADERS)

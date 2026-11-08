@@ -56,16 +56,21 @@ function toCoord(value: unknown): number {
 const COMMENT_OVERRIDE_CODES = ["df0044", "df009"]
 
 /**
- * isBill verdict from the verification outcome alone — independent of the
+ * isBillable verdict from the verification outcome alone — independent of the
  * TAT math. "Address Found" bills outright; "Not Approached" (with a
  * Successful verification) bills only via a Comments override ("N/A" or an
  * override code), as does "Nearest Area Searched but Address Not Found"
- * (override codes only). Everything else stays unbilled (isBill null) and
- * is flagged "Attention Needed" so the report highlights it for manual
- * review — alongside every Comments-based verdict above.
+ * (override codes only). Decided non-billable outcomes get an explicit
+ * "No": "Not Approached" with an Unsuccessful verification, and "Nearest
+ * Area Searched but Address Not Found" without an override code. Everything
+ * else stays unbilled (isBillable null).
+ *
+ * "Attention Needed" is limited to two review cases: a blank
+ * AddressApproachStatus, and a Comments-override billable verdict under
+ * "Not Approached" — the report highlights those rows yellow.
  */
 function billingFlag(row: TripStatusRow): {
-  isBill: "Yes" | null
+  isBillable: "Yes" | "No" | null
   attentionNeeded: string | null
 } {
   // Collapse whitespace runs so backend variants like "Nearest  Area"
@@ -79,7 +84,7 @@ function billingFlag(row: TripStatusRow): {
     comments.includes(needle.toLowerCase())
 
   if (approach === "Address Found") {
-    return { isBill: "Yes", attentionNeeded: null }
+    return { isBillable: "Yes", attentionNeeded: null }
   }
   if (
     approach === "Not Approached" &&
@@ -87,16 +92,34 @@ function billingFlag(row: TripStatusRow): {
     (commentsContain("N/A") ||
       COMMENT_OVERRIDE_CODES.some((code) => commentsContain(code)))
   ) {
-    return { isBill: "Yes", attentionNeeded: "Yes" }
+    return { isBillable: "Yes", attentionNeeded: "Yes" }
+  }
+  // A failed verification under "Not Approached" is a decided non-billable
+  // outcome, not something needing review: verdict "No".
+  if (approach === "Not Approached" && verification === "Unsuccessful") {
+    return { isBillable: "No", attentionNeeded: null }
   }
   if (
     approach === "Nearest Area Searched but Address Not Found" &&
     COMMENT_OVERRIDE_CODES.some((code) => commentsContain(code))
   ) {
-    return { isBill: "Yes", attentionNeeded: "Yes" }
+    return { isBillable: "Yes", attentionNeeded: null }
   }
-  // Everything else: unbilled, flagged for manual review (highlighted).
-  return { isBill: null, attentionNeeded: "Yes" }
+  // "Nearest Area Searched but Address Not Found" without a Comments
+  // override is likewise a decided non-billable outcome: verdict "No".
+  if (
+    approach === "Nearest Area Searched but Address Not Found" &&
+    !COMMENT_OVERRIDE_CODES.some((code) => commentsContain(code))
+  ) {
+    return { isBillable: "No", attentionNeeded: null }
+  }
+  // Everything else: unbilled. Only a blank AddressApproachStatus is
+  // flagged for manual review; any other unrecognized outcome stays
+  // unflagged.
+  if (approach === "") {
+    return { isBillable: null, attentionNeeded: "Yes" }
+  }
+  return { isBillable: null, attentionNeeded: null }
 }
 
 export function processBilling(
@@ -290,11 +313,11 @@ export function processBilling(
     billingRow["Price After Penalty"] = null
     billingRow["Compared Branches And Distances"] = null
 
-    // isBill and the attention flag are properties of the verification
+    // isBillable and the attention flag are properties of the verification
     // outcome alone — set on every row, including the skipped/unbilled
     // paths below.
-    const { isBill, attentionNeeded } = billingFlag(row)
-    billingRow["isBill"] = isBill
+    const { isBillable, attentionNeeded } = billingFlag(row)
+    billingRow["isBillable"] = isBillable
     billingRow["Attention Needed"] = attentionNeeded
 
     // A null SubmissionDateTime means the backend never recorded a
